@@ -1,0 +1,27 @@
+
+# Dependências
+node_modules/
+
+# Segredos e variáveis de ambiente
+.env
+.env.*
+!.env.example
+
+# Logs e arquivos temporários
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# Builds gerados
+dist/
+www/
+coverage/
+
+# Android e Gradle
+**/.gradle/
+**/build/
+local.properties
+
+# Configurações locais do editor
+.vscode/

@@ -1,0 +1,15 @@
+{
+  "appId": "com.vaimoto.driver",
+  "appName": "VaiMoto Mototaxista",
+  "webDir": "../../dist/driver-app",
+  "android": {
+    "path": "../../android/driver",
+    "backgroundColor": "#f5f7f4"
+  },
+  "plugins": {
+    "StatusBar": {
+      "backgroundColor": "#176b4d",
+      "style": "LIGHT"
+    }
+  }
+}

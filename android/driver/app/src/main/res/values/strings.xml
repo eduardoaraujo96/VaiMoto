@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">VaiMoto Mototaxista</string>
+    <string name="title_activity_main">VaiMoto Mototaxista</string>
+    <string name="package_name">com.vaimoto.driver</string>
+    <string name="custom_url_scheme">com.vaimoto.driver</string>
+</resources>

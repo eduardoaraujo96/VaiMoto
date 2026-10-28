@@ -1,0 +1,15 @@
+{
+  "appId": "com.vaimoto.app",
+  "appName": "VaiMoto Passageiro",
+  "webDir": "../../dist/customer-app",
+  "android": {
+    "path": "../../android/customer",
+    "backgroundColor": "#f5f7f4"
+  },
+  "plugins": {
+    "StatusBar": {
+      "backgroundColor": "#176b4d",
+      "style": "LIGHT"
+    }
+  }
+}
