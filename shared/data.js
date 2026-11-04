@@ -6,10 +6,17 @@ const PROFILE_PHOTO_BUCKET = 'vaimoto-profile-photos';
 const profilePhotoCache = new Map();
 
 function throwLocationSchemaError(error) {
+  throwPushTriggerJsonError(error);
   if (error?.code === '42703' || error?.code === 'PGRST204') {
     throw new Error('O banco ainda não tem os campos de localização do VaiMoto. Execute a migração atualizada supabase/vaimoto-map.sql no projeto Supabase.');
   }
   throw error;
+}
+
+function throwPushTriggerJsonError(error) {
+  if (error?.code === '22P02' || /invalid input syntax for type json/i.test(error?.message || '')) {
+    throw new Error('O trigger de notificação push do Supabase está com JSON inválido e bloqueia a proposta. Execute supabase/disable-broken-push-triggers.sql no SQL Editor e tente novamente.');
+  }
 }
 
 function throwProfileDetailsSchemaError(error) {
@@ -513,6 +520,7 @@ export async function submitOffer({ rideId, price, etaMinutes }) {
   if (error?.code === '42703' || error?.code === 'PGRST204') {
     throw new Error('A tabela de propostas do VaiMoto está desatualizada. Atualize o schema vaimoto_ride_offers no Supabase.');
   }
+  throwPushTriggerJsonError(error);
   if (error) throw error;
   return data;
 }
