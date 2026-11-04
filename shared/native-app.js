@@ -29,10 +29,10 @@ export function nativeAuthRedirectUrl(appId) {
   return Capacitor.isNativePlatform() ? `${appId}://auth/callback` : undefined;
 }
 
-export async function registerNativeAppHandlers({ onBack, onError }) {
+export async function registerNativeAppHandlers({ onBack, onError, statusBarColor = '#176b4d' }) {
   if (!Capacitor.isNativePlatform()) return;
 
-  await StatusBar.setBackgroundColor({ color: '#176b4d' });
+  await StatusBar.setBackgroundColor({ color: statusBarColor });
   await StatusBar.setStyle({ style: Style.Light });
 
   await App.addListener('backButton', ({ canGoBack }) => {

@@ -62,7 +62,7 @@ com.vaimoto.app://auth/callback
 com.vaimoto.driver://auth/callback
 ```
 
-O retorno de autenticação por deep link e o botão Voltar Android são tratados pelo Capacitor. A sessão Supabase continua persistida no armazenamento local do WebView. O aplicativo só solicita acesso à internet; não usa GPS nem câmera. A seleção existente de foto de perfil usa o seletor de arquivos do Android. Os ícones e a tela inicial nativos permanecem os recursos provisórios padrão do Capacitor; não há logotipo oficial no projeto.
+O retorno de autenticação por deep link e o botão Voltar Android são tratados pelo Capacitor. A sessão Supabase continua persistida no armazenamento local do WebView. O GPS é solicitado somente quando o usuário pede sua localização no mapa ou quando o mototaxista está online/em uma corrida ativa; se a permissão for negada, os pontos podem ser marcados manualmente. A seleção de foto de perfil usa o seletor de arquivos do Android. Os ícones e a tela inicial nativos permanecem os recursos provisórios padrão do Capacitor; não há logotipo oficial no projeto.
 
 Para instalar um APK de depuração, transfira o arquivo para o celular e abra-o (talvez seja necessário autorizar instalação dessa origem nas configurações do Android), ou use `adb install caminho\app-debug.apk` com depuração USB. Não distribua APKs de depuração. Para Google Play, gere uma chave de assinatura de release em local seguro, configure a assinatura sem incluir senhas/keystore no repositório e gere um Android App Bundle (AAB) assinado pelo Android Studio.
 
@@ -77,29 +77,73 @@ Depois de instalar ambos APKs e configurar as URLs de redirecionamento no Supaba
 5. Teste iniciar, cancelar antes do início e concluir a corrida; depois avalie dos dois lados e confirme que o histórico persiste após novo login.
 6. Carregue fotos de perfil pelo seletor de arquivos e confira a exibição mútua durante solicitação/corrida; confirme avatar padrão para perfil sem foto.
 7. Teste perda/restauração de Wi-Fi ou dados móveis durante o acompanhamento. Veja erros nativos com `adb logcat` e erros JavaScript pelo `chrome://inspect` conectado ao app de depuração.
-8. Instale os dois APKs em um dispositivo Android compatível (API 24+). A aplicação não pede localização nem câmera, pois essas funções não são usadas.
+8. Instale os dois APKs em um dispositivo Android compatível (API 24+). Teste a permissão de localização, a seleção manual no mapa e a continuidade do fluxo após negar a permissão.
 
 ## Modo demonstração
 Sem variáveis Supabase, o projeto funciona com dados claramente identificados como fictícios. Teste os campos de partida/destino, validação, navegação entre páginas, escolha e confirmação demonstrativas, disponibilidade local do profissional e formulário de proposta. Nenhuma corrida demonstrativa é enviada ao banco nem representa uma contratação real.
 
 ## Configurar Supabase
-1. Crie um projeto no Supabase.
-2. Abra o SQL Editor. Para um projeto novo, execute nesta ordem: `supabase/schema.sql`, `supabase/driver-approval.sql`, `supabase/realtime-flow.sql`, `supabase/ride-enhancements.sql` e `supabase/ride-completion-reviews.sql`. Em um banco existente, não execute o schema inicial: aplique as migrações ainda não executadas na mesma ordem. A última migração adiciona finalização transacional, histórico, avaliações mútuas, reputação calculada e políticas seguras para fotos após a conclusão.
-3. Em Project Settings → API, copie a URL do projeto e a chave pública/anon (publishable key, quando disponível).
-4. Crie ou edite `customer-app/.env.local` e `driver-app/.env.local`, preenchendo URL e chave pública do Supabase nos dois arquivos:
+O app usa as tabelas isoladas `vaimoto_profile_details`, `vaimoto_rides`, `vaimoto_ride_offers`, `vaimoto_driver_locations`, `vaimoto_ride_reviews` e `vaimoto_push_devices`. O mapa prioriza Matões-MA e usa busca Photon (Komoot) sobre dados OpenStreetMap, sem limitar os resultados à cidade. Pesquisas são feitas após uma pausa na digitação, limitadas e armazenadas em cache durante a sessão. O texto digitado é enviado ao serviço de busca para obter sugestões; se nenhum resultado aparecer, o passageiro pode manter a descrição e marcar um ponto aproximado ou confirmar que não tem coordenadas. Não é feita geocodificação automática de endereços após essa escolha.
+
+Origem/destino usam os campos `vaimoto_rides.pickup_text`, `destination_text`, `pickup_latitude`, `pickup_longitude`, `destination_latitude`, `destination_longitude`, `pickup_location_source` e `destination_location_source`. As coordenadas são validadas no cliente e por constraints no banco; `text_only` mantém coordenadas nulas e nunca substitui a localidade pelo centro da cidade. O motorista vê as descrições mesmo quando falta coordenada e recebe um aviso para combinar uma referência. A posição atual do profissional usa `vaimoto_driver_locations.latitude` e `longitude`. O schema VaiMoto não registra forma de pagamento.
+
+Para configurar um projeto Supabase, é necessário que a camada base isolada VaiMoto já exista antes de executar `supabase/vaimoto-map.sql`. **A cópia local de `supabase/vaimoto-isolated.sql` está vazia**, portanto não use as instruções antigas de executar `schema.sql` seguido desse arquivo como configuração de um projeto novo. `schema.sql` contém o modelo legado e não cria as tabelas isoladas usadas pelo app. Recupere/valide a migração-base isolada antes de inicializar uma nova instância. No banco já provisionado com as tabelas `vaimoto_*`, execute a versão atual de `supabase/vaimoto-map.sql` no SQL Editor para adicionar coordenadas, origem dos pontos (`geocoded`, `manual`, `device` ou `text_only`), acesso RLS à posição do mototaxista atribuído e Realtime de localização. Os scripts incrementais legados (`driver-approval.sql`, `realtime-flow.sql`, `ride-enhancements.sql` e `ride-completion-reviews.sql`) não substituem essa camada VaiMoto.
+
+Em um projeto já provisionado que ainda não tenha os dados isolados do perfil, execute também `supabase/vaimoto-profile-details.sql` no SQL Editor. Essa migração cria `vaimoto_profile_details`, usada para salvar os dados do veículo e permitir que o app valide o perfil antes de colocar o motorista online; ela não altera as tabelas de perfil do FlashTaxi.
+
+1. Em Project Settings → API, copie a URL do projeto e a chave pública/anon (publishable key, quando disponível).
+2. Crie ou edite `customer-app/.env.local` e `driver-app/.env.local`, preenchendo URL e chave pública do Supabase nos dois arquivos:
 
 ```env
 VITE_SUPABASE_URL=https://SEU-PROJETO.supabase.co
 VITE_SUPABASE_ANON_KEY=SUA_CHAVE_PUBLICA
 ```
 
-5. Pare e reinicie o Vite. Nunca use `service_role` ou chave secreta no navegador.
-6. Configure os provedores de autenticação e a confirmação de e-mail no painel Supabase conforme sua necessidade.
-7. Confirme que `rides`, `ride_offers` e `ride_reviews` estão na publicação `supabase_realtime`. As migrações tentam habilitá-las automaticamente.
+3. Pare e reinicie o Vite. Nunca use `service_role` ou chave secreta no navegador.
+4. Configure os provedores de autenticação e a confirmação de e-mail no painel Supabase conforme sua necessidade.
+5. A camada base habilita corridas e propostas VaiMoto no Realtime; `vaimoto-map.sql` também habilita atualizações de `vaimoto_driver_locations`. A posição só é consultável pelo próprio mototaxista e pelo passageiro com corrida confirmada/em andamento.
 
 Os scripts Vite carregam as variáveis do diretório do app correspondente. Se os dois apps usam o mesmo projeto Supabase, copie os mesmos valores para os dois arquivos `.env.local`; esses arquivos são ignorados pelo Git.
 
-Use o arquivo `supabase/schema.sql` como schema inicial. `vaimoto-schema.sql`, na raiz, é uma cópia legada e não inclui as atualizações recentes de segurança.
+Use `supabase/schema.sql` como schema inicial somente em um projeto vazio. `vaimoto-schema.sql`, na raiz, é uma cópia legada e não inclui as atualizações recentes de segurança.
+
+### Integrar VaiMoto a um Supabase FlashTaxi existente
+
+O app FlashTaxi existente usa `rides`, `bids`, `profiles` e `vehicle_details`, com estados e regras próprios. O VaiMoto usa tabelas, campos e RPCs diferentes. Para não alterar nem misturar as corridas existentes, o app VaiMoto usa tabelas isoladas com prefixo `vaimoto_` e compartilha apenas a identidade/perfil base do Supabase (`auth.users` e `profiles`).
+
+1. Faça/valide um backup do projeto e revise `supabase/vaimoto-isolated.sql`.
+2. No SQL Editor do projeto FlashTaxi, execute somente `supabase/vaimoto-isolated.sql`. Não execute nele `schema.sql`, `driver-approval.sql`, `realtime-flow.sql`, `ride-enhancements.sql`, `ride-completion-reviews.sql` ou `push-notifications.sql`.
+3. A migração cria tabelas, políticas, RPCs e um bucket de fotos com prefixo VaiMoto; não renomeia nem apaga tabelas existentes e não copia dados de corridas FlashTaxi. Ela cria somente os registros vazios de detalhes VaiMoto associados aos perfis já existentes.
+4. Os novos cadastros do app cliente usam o papel `passenger` exigido pelo projeto FlashTaxi; dentro do VaiMoto esse papel é apresentado como cliente. Os perfis profissionais continuam sujeitos à aprovação do banco.
+5. As variáveis `.env.local` dos dois apps devem apontar para o mesmo projeto. Após aplicar a migração, reinicie os servidores Vite e teste com contas separadas de passageiro e mototaxista aprovado.
+
+O app e a Edge Function já estão preparados para esse modelo isolado. Nenhuma migração é executada automaticamente pelo app. Se optar por notificações push, configure os webhooks conforme a seção abaixo usando `vaimoto_rides` (`INSERT` e `UPDATE`) e `vaimoto_ride_offers` (`INSERT`).
+
+## Notificações de corrida (Android)
+
+O mototaxista recebe alertas sonoros repetidos com o arquivo `som_corrida.wav` enquanto o app está aberto, online e há solicitações sem proposta enviada. Enviar uma proposta, ficar offline ou ocultar o app interrompe a repetição. Em segundo plano, a notificação push de nova corrida usa o som personalizado do canal Android; não é usado serviço de som contínuo em segundo plano. O passageiro recebe push de novas propostas e mudanças de estado da corrida. O app pede permissão no contexto de uso: ao ficar online (mototaxista) ou ao solicitar corrida (passageiro).
+
+O canal Android `ride-requests-v2` é criado no início do app do mototaxista, antes da solicitação de registro no FCM, com importância máxima, visibilidade pública, vibração e o som `som_corrida`. O WAV precisa estar tanto em `android/driver/app/src/main/res/raw/` (som das notificações nativas) quanto em `driver-app/public/` (alerta sonoro enquanto o app está aberto). O backend escolhe esse canal apenas para novas solicitações; outros tipos de push continuam no canal `ride-alerts`. A configuração `presentationOptions` controla a apresentação em primeiro plano no iOS, não a apresentação Android.
+
+O canal mantém as preferências definidas pelo usuário e o Android não as substitui ao recriar o canal com o mesmo ID. Para um teste limpo, desinstale e reinstale o app ou abra **Configurações → Apps → VaiMoto → Notificações → Novas corridas** e confira som/vibração. Se precisar mudar as configurações de um canal já instalado em produção, use um novo ID de canal e envie esse mesmo ID no payload FCM.
+
+1. No Firebase, configure os apps Android com os IDs `com.vaimoto.app` e `com.vaimoto.driver`. Coloque os respectivos arquivos `google-services.json` em `android/customer/app/` e `android/driver/app/`. Esses arquivos são configuração local e ficam ignorados pelo Git; não os publique nem os inclua em commits.
+2. Em um projeto VaiMoto dedicado, execute `supabase/push-notifications.sql` depois das migrações de perfil e corridas. No projeto FlashTaxi existente, a tabela isolada de dispositivos já é criada por `supabase/vaimoto-isolated.sql`; não execute o SQL genérico de push.
+3. Em **Project Settings → Edge Functions → Secrets**, configure `FCM_SERVICE_ACCOUNT_JSON` com o JSON da service account do Firebase Messaging. Em um projeto VaiMoto dedicado, configure também `PUSH_WEBHOOK_SECRET` com um segredo aleatório forte. Para coexistir com funções antigas do FlashTaxi, use `VAIMOTO_PUSH_WEBHOOK_SECRET` no VaiMoto isolado. Não coloque esses valores no código, nos apps nem no Git.
+4. Implante a Edge Function com JWT do gateway desabilitado, pois a função valida o segredo de webhook:
+
+   ```powershell
+   supabase functions deploy send-push --no-verify-jwt
+   ```
+
+5. Em **Database → Webhooks**, em um projeto VaiMoto dedicado, crie webhooks `POST` para `rides` em `INSERT` e `UPDATE`, e `ride_offers` em `INSERT`. No projeto FlashTaxi existente, use `vaimoto_rides` em `INSERT` e `UPDATE`, e `vaimoto_ride_offers` em `INSERT`. Use como URL `https://SEU-PROJETO.supabase.co/functions/v1/send-push` e envie o cabeçalho `x-webhook-secret` com o mesmo valor configurado em `PUSH_WEBHOOK_SECRET` (projeto dedicado) ou `VAIMOTO_PUSH_WEBHOOK_SECRET` (FlashTaxi isolado).
+6. Sincronize e compile os dois apps com os comandos Android acima, instale-os, permita notificações no Android e teste com contas reais separadas. Confirme no sistema que o canal **Chamados e corridas** não está silenciado. O cliente precisa de uma solicitação ativa e o mototaxista precisa estar aprovado e online.
+
+Se uma corrida falhar com `invalid input syntax for type json`, confira o trigger `vaimoto_send_push_rides`: os cabeçalhos passados a `supabase_functions.http_request` precisam ser JSON válido, com chaves e valores entre aspas. Se o trigger existente foi criado manualmente e está com cabeçalhos inválidos, gere um segredo novo, atualize `VAIMOTO_PUSH_WEBHOOK_SECRET` nas Edge Function Secrets e execute `supabase/fix-vaimoto-push-trigger.sql` no SQL Editor, substituindo o placeholder pelo mesmo segredo novo. Não salve nem versione o arquivo com o segredo preenchido. O script recria o trigger para `INSERT` e `UPDATE` usando `json_build_object` para evitar JSON malformado.
+
+Para receber solicitações abertas e atualizações de propostas em tempo real no app do mototaxista, execute `supabase/vaimoto-driver-realtime.sql` depois da migração-base VaiMoto. A migration adiciona somente `vaimoto_rides` e `vaimoto_ride_offers` à publicação `supabase_realtime`; não altera permissões ou políticas RLS. O mototaxista precisa ter perfil aprovado, veículo válido e ficar online. Se a consulta de corridas ou propostas for negada, revise as políticas RLS de leitura/inserção das tabelas VaiMoto; não conceda acesso público nem desative RLS.
+
+O canal Android de novas corridas usa importância máxima e `som_corrida.wav`. A entrega em segundo plano depende da permissão de notificações, das configurações de bateria/rede do aparelho e da configuração correta do Firebase para cada `applicationId`. Depois de alterar o backend, reimplante a Edge Function `send-push`; depois de alterar o arquivo/recursos nativos, sincronize e recompile o app mototaxista.
 
 ## Testar a conversa entre cliente e mototaxista
 1. Configure os mesmos valores Supabase nos dois apps e aplique o SQL na ordem acima. Cada app tem sessão de login própria, então entre com a conta do cliente em `http://localhost:5173` e com a conta do mototaxista em `http://localhost:5174`.
@@ -138,6 +182,7 @@ vaimoto/
 ├── supabase/realtime-flow.sql # Atualização do fluxo para projetos existentes
 ├── supabase/ride-enhancements.sql # Veículos, username, cronômetro e ações da corrida
 ├── supabase/ride-completion-reviews.sql # Finalização, histórico, avaliações e reputação
+├── supabase/vaimoto-isolated.sql # Integração isolada para projetos FlashTaxi existentes
 ├── native/customer/       # Configuração Capacitor do app de passageiro
 ├── native/driver/         # Configuração Capacitor do app de mototaxista
 ├── android/customer/      # Projeto Android nativo do passageiro
@@ -157,6 +202,7 @@ vaimoto/
 - Autenticação por e-mail e senha usando Supabase quando configurado.
 - Inserção de solicitações e propostas reais quando o Supabase está configurado e o usuário está autenticado.
 - Atualização em tempo real das solicitações abertas e propostas; aceite por RPC transacional que confirma uma única proposta e notifica o mototaxista.
+- Push Android de solicitações, propostas e atualizações de estado; alerta sonoro repetido apenas no app aberto do mototaxista enquanto houver solicitações ainda sem resposta.
 - Solicitações visíveis apenas para mototaxistas aprovados e online; a disponibilidade é restaurada do banco ao entrar no app.
 - O cliente retoma corridas ativas após entrar novamente e acompanha status, propostas e o valor aceito.
 - Cronômetro de chegada persistente; o cliente vê nome de usuário e dados do veículo após a confirmação. Passageiro e mototaxista podem cancelar antes do início, e o profissional pode iniciar a viagem.
@@ -165,16 +211,16 @@ vaimoto/
 - Mototaxista finaliza uma corrida em andamento por RPC; o histórico persistente e as avaliações mútuas só aceitam avaliações de participantes após a conclusão.
 - Reputação é calculada das avaliações reais no banco; sem avaliações, a interface informa “Sem avaliações”. Cada participante pode avaliar uma vez e não pode alterar a avaliação enviada.
 - Configuração Vite separada por app para carregar o `.env.local` correspondente.
-- SQL inicial para `profiles`, `rides`, `driver_locations` e `ride_offers`, com RLS.
-- Nenhum pagamento real, mapa, GPS ou geolocalização inventada.
+- Mapa interativo Leaflet para origem/destino e acompanhamento da corrida; localização do mototaxista atualizada enquanto online/em corrida e compartilhada em Realtime somente com o passageiro da corrida atribuída.
+- Nenhum pagamento real ou geocodificação automática de descrições: o banco VaiMoto não contém forma de pagamento; Photon oferece sugestões de busca, e as coordenadas vêm de um resultado selecionado, de um ponto manual ou do GPS. O enquadramento inicial do mapa nunca é salvo como endereço.
 
 ## Limitações desta etapa
 - Os exemplos de corridas e preços são fictícios.
 - A entrega de solicitações é compartilhada com todos os mototaxistas aprovados e online; despacho por proximidade e expansão após 30 segundos ainda não existem.
 - Expiração automática de solicitações continua fora desta etapa. Corridas em andamento não podem ser canceladas pela ação comum.
 - O cadastro público ainda permite solicitar o papel de mototaxista, mas esse perfil fica pendente e não pode acessar solicitações, enviar propostas, publicar disponibilidade nem aparecer no diretório público até aprovação por um operador confiável. Para aprovar um cadastro revisado no SQL Editor do Supabase, use `update public.profiles set driver_approval_status = 'approved' where id = 'UUID-DO-PERFIL' and role = 'driver';`. A decisão deve ser feita apenas após a verificação dos documentos e do veículo.
-- A integração de autenticação exige que o SQL tenha sido aplicado e que as variáveis estejam corretas.
+- A integração de autenticação exige que as tabelas VaiMoto e as migrações aplicáveis tenham sido instaladas e que as variáveis estejam corretas.
 - As políticas SQL são uma base inicial e precisam ser revisadas e testadas antes de produção, inclusive a minimização dos dados de perfil e os testes RLS com contas separadas.
 
 ## Próxima etapa recomendada
-Operar a aprovação de mototaxistas e testar o fluxo ponta a ponta com contas reais separadas; depois adicionar despacho por proximidade, expiração automática, conclusão da viagem, mapa e testes RLS.
+Recuperar a migração-base VaiMoto ausente do repositório, verificar a instalação da migração de mapa no Supabase e testar o fluxo ponta a ponta com contas separadas. Despacho por proximidade e expiração automática continuam fora do escopo atual.

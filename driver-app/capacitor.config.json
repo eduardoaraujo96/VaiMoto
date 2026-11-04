@@ -1,5 +1,10 @@
 {
   "appId": "com.vaimoto.driver",
   "appName": "Mototaxista",
-  "webDir": "dist"
+  "webDir": "dist",
+  "plugins": {
+    "PushNotifications": {
+      "presentationOptions": ["badge", "sound", "alert"]
+    }
+  }
 }

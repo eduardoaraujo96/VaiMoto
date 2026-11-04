@@ -22,6 +22,8 @@ coverage/
 **/.gradle/
 **/build/
 local.properties
+**/google-services*.json
+supabase/.temp/
 
 # Configurações locais do editor
 .vscode/

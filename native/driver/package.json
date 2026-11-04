@@ -5,6 +5,8 @@
     "@capacitor/android": "8.5.3",
     "@capacitor/app": "8.0.0",
     "@capacitor/core": "8.5.3",
+    "@capacitor/geolocation": "^8.2.4",
+    "@capacitor/push-notifications": "^8.0.0",
     "@capacitor/status-bar": "8.0.0"
   }
 }

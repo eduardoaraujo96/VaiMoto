@@ -1,0 +1,145 @@
+.ride-map-panel {
+  display: grid;
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.ride-map-heading,
+.ride-map-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ride-map-heading h2 {
+  margin: 0;
+}
+
+.ride-map-controls {
+  justify-content: flex-start;
+}
+
+.ride-map {
+  width: 100%;
+  min-height: 280px;
+  height: min(48vh, 420px);
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: 14px;
+  background: #e8edf0;
+  overflow: hidden;
+  z-index: 0;
+}
+
+.ride-map-marker {
+  width: 18px;
+  height: 18px;
+  border: 3px solid #fff;
+  border-radius: 50% 50% 50% 0;
+  background: #16a34a;
+  box-shadow: 0 2px 8px #0f172a66;
+  transform: rotate(-45deg);
+}
+
+.ride-map-marker--destination {
+  background: #dc2626;
+}
+
+.ride-map-marker--driver {
+  background: #2563eb;
+}
+
+.ride-map-panel .leaflet-control-attribution {
+  font-size: 10px;
+}
+
+.location-search-field {
+  position: relative;
+}
+
+.location-suggestions {
+  display: grid;
+  gap: 2px;
+  max-height: 260px;
+  overflow-y: auto;
+  margin-top: 6px;
+  border: 1px solid var(--line, #d8e0dc);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 8px 24px #17231f18;
+}
+
+.location-suggestions[hidden],
+.location-confirmation[hidden] {
+  display: none !important;
+}
+
+.location-suggestion {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  padding: 11px 13px;
+  border: 0;
+  border-bottom: 1px solid #eef1ef;
+  background: transparent;
+  color: #17231f;
+  text-align: left;
+  cursor: pointer;
+}
+
+.location-suggestion:last-child {
+  border-bottom: 0;
+}
+
+.location-suggestion:hover,
+.location-suggestion:focus-visible {
+  background: #f0f8f3;
+  outline: 0;
+}
+
+.location-suggestion strong {
+  font-size: 14px;
+}
+
+.location-suggestion span,
+.location-search-message {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.location-suggestion--text {
+  background: #f8faf9;
+}
+
+.location-search-message {
+  padding: 10px 13px;
+}
+
+.location-confirmation {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.location-confirmation input {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+
+@media (max-width: 600px) {
+  .ride-map {
+    height: 38vh;
+    min-height: 250px;
+  }
+
+  .ride-map-controls > button {
+    flex: 1 1 145px;
+  }
+}
