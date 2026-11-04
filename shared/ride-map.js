@@ -108,6 +108,13 @@ export function mountRideMap(element, { points = [], selectionMode = null, onSel
   const resizeFrame = requestAnimationFrame(() => {
     if (!destroyed) map.invalidateSize();
   });
+  const resizeTimer = window.setTimeout(() => {
+    if (!destroyed) map.invalidateSize();
+  }, 180);
+  const onWindowResize = () => {
+    if (!destroyed) map.invalidateSize();
+  };
+  window.addEventListener('resize', onWindowResize);
 
   return {
     setMode(nextMode) {
@@ -130,6 +137,8 @@ export function mountRideMap(element, { points = [], selectionMode = null, onSel
     destroy() {
       destroyed = true;
       cancelAnimationFrame(resizeFrame);
+      window.clearTimeout(resizeTimer);
+      window.removeEventListener('resize', onWindowResize);
       map.off();
       map.remove();
       markers = [];

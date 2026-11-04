@@ -1,11 +1,46 @@
 import { createClient } from '@supabase/supabase-js';
 
-const url = import.meta.env.VITE_SUPABASE_URL?.trim();
-const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim();
-export const isSupabaseConfigured = Boolean(url && anonKey);
-export const supabase = isSupabaseConfigured ? createClient(url, anonKey, {
-  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
-}) : null;
+function readEnv(name) {
+  const value = import.meta.env[name];
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function isValidSupabaseUrl(value) {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
+const url = readEnv('VITE_SUPABASE_URL');
+const anonKey = readEnv('VITE_SUPABASE_ANON_KEY');
+const appId = import.meta.env.VITE_VAIMOTO_APP_ID || readEnv('VITE_VAIMOTO_APP_ID') || 'customer';
+const credentialsReady = Boolean(url && anonKey && isValidSupabaseUrl(url) && anonKey.length > 20);
+
+function createSupabaseClient() {
+  if (!credentialsReady) return null;
+  try {
+    return createClient(url, anonKey, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+        flowType: 'pkce',
+        storageKey: `vaimoto-auth-${appId}`
+      },
+      realtime: {
+        params: { eventsPerSecond: 10 }
+      }
+    });
+  } catch {
+    return null;
+  }
+}
+
+export const supabase = createSupabaseClient();
+export const isSupabaseConfigured = Boolean(supabase);
 
 export function subscribeToPostgresChanges({ channelName, table, event = '*', filter, onChange, onStatus }) {
   if (!supabase) throw new Error('Configure o Supabase para receber atualizações em tempo real.');

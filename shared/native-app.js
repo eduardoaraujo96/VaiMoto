@@ -6,14 +6,15 @@ import { supabase } from './supabase.js';
 async function handleAuthCallback(url) {
   if (!supabase) return;
   const callback = new URL(url);
-  const code = callback.searchParams.get('code');
+  const hashParams = new URLSearchParams(callback.hash.startsWith('#') ? callback.hash.slice(1) : callback.hash);
+  const code = callback.searchParams.get('code') || hashParams.get('code');
   if (code) {
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     if (error) throw error;
     return;
   }
 
-  const parameters = new URLSearchParams(callback.hash.slice(1));
+  const parameters = hashParams;
   const accessToken = parameters.get('access_token');
   const refreshToken = parameters.get('refresh_token');
   if (!accessToken || !refreshToken) return;

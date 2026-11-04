@@ -32,8 +32,9 @@
 }
 
 .app-shell .topbar {
-  height: 72px;
+  height: calc(72px + env(safe-area-inset-top));
   padding-inline: clamp(18px, 5vw, 64px);
+  padding-top: env(safe-area-inset-top);
   background: #111827;
   border-bottom: 0;
   color: #fff;
@@ -75,8 +76,10 @@
 
 .app-shell .layout {
   grid-template-columns: 248px minmax(0, 1fr);
+  width: 100%;
   max-width: 1440px;
-  min-height: calc(100dvh - 72px);
+  min-width: 0;
+  min-height: calc(100dvh - 72px - env(safe-area-inset-top));
 }
 
 .app-shell .sidebar {
@@ -120,6 +123,7 @@
 }
 
 .app-shell .main {
+  min-width: 0;
   max-width: 1040px;
   padding: clamp(22px, 4vw, 46px);
 }
@@ -152,6 +156,7 @@
 .app-shell .driver-card,
 .app-shell .offer-card,
 .app-shell .stat-card {
+  min-width: 0;
   border: 1px solid #e5e7eb;
   border-radius: 18px;
   background: #fff;
@@ -861,7 +866,31 @@
   color: #111827;
 }
 
+.app-shell .auth-card {
+  max-width: min(560px, 100%);
+}
+
+.app-shell .auth-card:has(.profile-summary),
+.app-shell .auth-card:has(#profile-form) {
+  max-width: min(720px, 100%);
+}
+
+.app-shell .profile-summary,
+.app-shell .request-card,
+.app-shell .active-ride-card {
+  min-width: 0;
+}
+
+.app-shell .panel .ride-map-panel {
+  margin: 8px 0 16px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
 .app-shell .bottom-nav {
+  z-index: 50;
   padding: 8px 6px max(8px, env(safe-area-inset-bottom));
   border-top-color: #e5e7eb;
   background: #fff;
@@ -899,13 +928,13 @@
 
 @media (max-width: 850px) {
   .app-shell .topbar {
-    height: 64px;
+    height: calc(64px + env(safe-area-inset-top));
     padding-inline: 16px;
   }
 
   .app-shell .layout {
     grid-template-columns: minmax(0, 1fr);
-    min-height: calc(100dvh - 64px);
+    min-height: calc(100dvh - 64px - env(safe-area-inset-top));
   }
 
   .app-shell .sidebar {

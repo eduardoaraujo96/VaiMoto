@@ -22,6 +22,8 @@
 }
 
 .ride-map {
+  position: relative;
+  isolation: isolate;
   width: 100%;
   min-height: 280px;
   height: min(48vh, 420px);
@@ -30,6 +32,13 @@
   background: #e8edf0;
   overflow: hidden;
   z-index: 0;
+}
+
+.ride-map .leaflet-pane,
+.ride-map .leaflet-top,
+.ride-map .leaflet-bottom,
+.ride-map .leaflet-control {
+  z-index: 1;
 }
 
 .ride-map-marker {

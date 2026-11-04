@@ -1,0 +1,75 @@
+.app-shell {
+  color: #17231f;
+  background: #f5f7f4;
+}
+
+.app-shell .topbar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  padding-top: env(safe-area-inset-top);
+  height: calc(76px + env(safe-area-inset-top));
+  background: #fff;
+}
+
+.app-shell .layout {
+  width: 100%;
+  min-width: 0;
+  min-height: calc(100dvh - 76px - env(safe-area-inset-top));
+}
+
+.app-shell .main {
+  min-width: 0;
+}
+
+.app-shell .hero-card {
+  box-shadow: 0 16px 36px #176b4d22;
+}
+
+.app-shell .panel,
+.app-shell .driver-card,
+.app-shell .offer-card,
+.app-shell .stat-card {
+  min-width: 0;
+}
+
+.app-shell .auth-card {
+  max-width: min(520px, 100%);
+}
+
+.app-shell .auth-card:has(.profile-avatar),
+.app-shell .auth-card:has(#profile-form) {
+  max-width: min(640px, 100%);
+}
+
+.app-shell .auth-card > .profile-avatar,
+.app-shell .auth-card .driver-top {
+  margin-bottom: 12px;
+}
+
+.app-shell .panel .ride-map-panel {
+  margin: 4px 0 16px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.app-shell .ride-map-panel .panel-sub {
+  margin-bottom: 0;
+}
+
+.app-shell .location-search-field {
+  min-width: 0;
+}
+
+@media (max-width: 850px) {
+  .app-shell .topbar {
+    height: calc(64px + env(safe-area-inset-top));
+    padding-inline: 16px;
+  }
+
+  .app-shell .layout {
+    min-height: calc(100dvh - 64px - env(safe-area-inset-top));
+  }
+}

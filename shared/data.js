@@ -56,11 +56,17 @@ async function attachPhotos(profiles) {
 }
 
 export async function getCurrentUser() {
-  if (!isSupabaseConfigured) return { data: null, error: null };
+  if (!isSupabaseConfigured || !supabase) return { data: { user: null }, error: null };
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
   if (sessionError) return { data: { user: null }, error: sessionError };
   if (!sessionData.session) return { data: { user: null }, error: null };
-  return await supabase.auth.getUser();
+  const { data, error } = await supabase.auth.getUser();
+  if (!error) return { data, error: null };
+  if (error.status === 401 || /invalid|expired/i.test(error.message || '')) {
+    await supabase.auth.signOut({ scope: 'local' }).catch(() => {});
+    return { data: { user: null }, error: null };
+  }
+  return { data: { user: sessionData.session.user }, error: null };
 }
 export async function signIn(email, password) {
   if (!isSupabaseConfigured) throw new Error('Configure o Supabase para entrar com uma conta real.');
@@ -195,12 +201,20 @@ export async function getDriverProfile(userId) {
 
 export async function getOwnProfile(userId) {
   if (!supabase) return null;
-  const { data: profile, error } = await supabase
+  let { data: profile, error } = await supabase
     .from('profiles')
-    .select('id, full_name, role, driver_approval_status, avatar_url')
+    .select('id, full_name, role, driver_approval_status')
     .eq('id', userId)
     .single();
-  if (error) throw error;
+  if (error?.code === '42703' || error?.message?.includes('driver_approval_status')) {
+    const fallback = await supabase
+      .from('profiles')
+      .select('id, full_name, role')
+      .eq('id', userId)
+      .single();
+    if (fallback.error) throw fallback.error;
+    profile = { ...fallback.data, driver_approval_status: fallback.data.role === 'driver' ? 'pending' : 'approved' };
+  } else if (error) throw error;
   let { data: details, error: detailsError } = await supabase
     .from('vaimoto_profile_details')
     .select('username, avatar_path, vehicle_type, vehicle_brand, vehicle_model, vehicle_color, vehicle_plate')
@@ -241,7 +255,8 @@ export async function updateOwnProfile({ username, vehicleType, vehicleBrand, ve
   const profileChanges = { username: normalizedUsername || null };
   if (vehicleType !== undefined) {
     const plate = normalizeVehiclePlate(vehiclePlate);
-    if (vehicleType && !['motorcycle', 'other'].includes(vehicleType)) {
+    const normalizedType = vehicleType === 'car' ? 'other' : vehicleType;
+    if (normalizedType && !['motorcycle', 'other'].includes(normalizedType)) {
       throw new Error('Selecione um tipo de veículo válido.');
     }
     if (vehicleColor && (String(vehicleColor).trim().length < 2 || String(vehicleColor).trim().length > 40)) {
@@ -251,7 +266,7 @@ export async function updateOwnProfile({ username, vehicleType, vehicleBrand, ve
       throw new Error('Informe uma placa válida nos formatos brasileiro antigo (ABC1234) ou Mercosul (ABC1D23).');
     }
     Object.assign(profileChanges, {
-      vehicle_type: vehicleType || null,
+      vehicle_type: normalizedType || null,
       vehicle_brand: String(vehicleBrand || '').trim() || null,
       vehicle_model: String(vehicleModel || '').trim() || null,
       vehicle_color: String(vehicleColor || '').trim() || null,
@@ -374,11 +389,21 @@ export async function getActiveDriverRide() {
   const { data: userResult, error: userError } = await supabase.auth.getUser();
   if (userError) throw userError;
   if (!userResult.user) return null;
+  const { data: offers, error: offersError } = await supabase
+    .from('vaimoto_ride_offers')
+    .select('id, ride_id')
+    .eq('driver_id', userResult.user.id)
+    .eq('status', 'accepted')
+    .order('created_at', { ascending: false })
+    .limit(8);
+  if (offersError) throw offersError;
+  const rideIds = [...new Set((offers || []).map(offer => offer.ride_id).filter(Boolean))];
+  if (!rideIds.length) return null;
   const { data, error } = await supabase
     .from('vaimoto_rides')
     .select('id, pickup_text, destination_text, pickup_latitude, pickup_longitude, destination_latitude, destination_longitude, pickup_location_source, destination_location_source, status, selected_offer_id, arrival_started_at, arrival_deadline_at, trip_started_at, cancelled_by, cancelled_at')
+    .in('id', rideIds)
     .in('status', ['confirmed', 'in_progress'])
-    .not('selected_offer_id', 'is', null)
     .order('arrival_started_at', { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -439,6 +464,9 @@ export async function getDriverAvailability(userId) {
     .select('is_available')
     .eq('driver_id', userId)
     .maybeSingle();
+  if (['42P01', 'PGRST205'].includes(error?.code)) {
+    throw new Error('O banco ainda não tem a tabela de disponibilidade do VaiMoto. Execute as migrações isoladas no projeto Supabase.');
+  }
   if (error) throw error;
   return data?.is_available === true;
 }
@@ -458,6 +486,9 @@ export async function setDriverAvailability(isAvailable) {
     .upsert({ driver_id: userResult.user.id, is_available: isAvailable }, { onConflict: 'driver_id' })
     .select('is_available')
     .single();
+  if (['42P01', 'PGRST205'].includes(error?.code)) {
+    throw new Error('O banco ainda não tem a tabela de disponibilidade do VaiMoto. Execute as migrações isoladas no projeto Supabase.');
+  }
   if (error) throw error;
   return data.is_available;
 }
