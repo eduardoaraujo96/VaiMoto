@@ -32,6 +32,11 @@ export function rideMapCardMarkup({ id, title, description, modes = [], activeMo
       <div><h2>${escapeHtml(title)}</h2><p class="panel-sub">${escapeHtml(description)}</p></div>
     </div>
     <div class="ride-map-controls">${modeButtons}${locationButton}</div>
+    <div class="ride-map-legend" aria-label="Legenda dos marcadores">
+      <span><i class="ride-map-legend-driver" aria-hidden="true"></i>Mototaxista</span>
+      <span><i class="ride-map-legend-pickup" aria-hidden="true"></i>Partida do passageiro</span>
+      <span><i class="ride-map-legend-destination" aria-hidden="true"></i>Destino</span>
+    </div>
     <div id="${escapeHtml(id)}" class="ride-map" role="application" aria-label="${escapeHtml(title)}"></div>
     <p class="field-help">${searchInfo
       ? 'Mapa © OpenStreetMap. Sugestões de locais usam Photon sobre dados OSM e priorizam Matões sem limitar outras cidades. Pontos só são salvos com a solicitação.'
@@ -43,7 +48,7 @@ export function mountRideMap(element, { points = [], selectionMode = null, onSel
   if (!element) return null;
 
   let mode = selectionMode;
-  let markers = [];
+  const markers = new Map();
   let currentPoints = [];
   const map = L.map(element, { scrollWheelZoom: false }).setView(defaultCenter, 13);
   let destroyed = false;
@@ -59,38 +64,55 @@ export function mountRideMap(element, { points = [], selectionMode = null, onSel
   });
 
   function setPoints(nextPoints, focusType) {
-    currentPoints = nextPoints
+    const validPoints = nextPoints
       .map(point => ({ ...point, coordinates: normalizeCoordinates(point) }))
       .filter(point => point.coordinates);
-    markers.forEach(marker => marker.remove());
-    markers = currentPoints.map(point => {
-      const markerClass = point.type === 'destination'
-        ? 'ride-map-marker ride-map-marker--destination'
-        : point.type === 'driver'
-          ? 'ride-map-marker ride-map-marker--driver'
-          : 'ride-map-marker';
-      const marker = L.marker([point.coordinates.latitude, point.coordinates.longitude], {
-        icon: L.divIcon({
+    const nextMarkers = new Map();
+    const keysChanged = validPoints.length !== markers.size
+      || validPoints.some(point => !markers.has(point.id || `${point.type}:${point.label || ''}`));
+    for (const point of validPoints) {
+      const key = point.id || `${point.type}:${point.label || ''}`;
+      const markerClass = `ride-map-marker ride-map-marker--${point.type}`;
+      let marker = markers.get(key);
+      if (marker) {
+        marker.setLatLng([point.coordinates.latitude, point.coordinates.longitude]);
+        marker.setIcon(L.divIcon({
           className: '',
           html: `<span class="${markerClass}" aria-hidden="true"></span>`,
           iconSize: [24, 28],
           iconAnchor: [12, 24]
-        }),
-        title: point.label || 'Localização'
-      }).addTo(map);
+        }));
+        marker.unbindTooltip();
+      } else {
+        marker = L.marker([point.coordinates.latitude, point.coordinates.longitude], {
+          icon: L.divIcon({
+            className: '',
+            html: `<span class="${markerClass}" aria-hidden="true"></span>`,
+            iconSize: [24, 28],
+            iconAnchor: [12, 24]
+          }),
+          title: point.label || 'Localização'
+        }).addTo(map);
+      }
       if (point.label) marker.bindTooltip(escapeHtml(point.label));
-      return marker;
-    });
+      nextMarkers.set(key, marker);
+    }
+    for (const [key, marker] of markers) {
+      if (!nextMarkers.has(key)) marker.remove();
+    }
+    markers.clear();
+    for (const [key, marker] of nextMarkers) markers.set(key, marker);
+    currentPoints = validPoints;
 
     const focused = focusType && currentPoints.find(point => point.type === focusType);
-    if (currentPoints.length > 1) {
+    if (focusType && focused) {
+      map.setView([focused.coordinates.latitude, focused.coordinates.longitude], Math.max(map.getZoom(), 15));
+    } else if (keysChanged && currentPoints.length > 1) {
       map.fitBounds(L.latLngBounds(currentPoints.map(point => [
         point.coordinates.latitude,
         point.coordinates.longitude
       ])).pad(0.18), { maxZoom: 15 });
-    } else if (focused) {
-      map.setView([focused.coordinates.latitude, focused.coordinates.longitude], Math.max(map.getZoom(), 15));
-    } else if (currentPoints.length === 1) {
+    } else if (keysChanged && currentPoints.length === 1) {
       map.setView([currentPoints[0].coordinates.latitude, currentPoints[0].coordinates.longitude], 15);
     }
   }
@@ -141,7 +163,7 @@ export function mountRideMap(element, { points = [], selectionMode = null, onSel
       window.removeEventListener('resize', onWindowResize);
       map.off();
       map.remove();
-      markers = [];
+      markers.clear();
       currentPoints = [];
     }
   };

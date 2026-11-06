@@ -1,12 +1,12 @@
 let audioContext;
 let alertAudioBuffer;
 let alertAudioLoading;
-let repeatTimer;
-let activeRideIds = [];
-const activeAudioSources = new Set();
-let audioStartPending = false;
+let playbackQueue = Promise.resolve();
 let reportedAudioFailure = false;
 let reportAudioError = () => {};
+const playedNotificationIds = new Set();
+const activeAudioSources = new Set();
+const MAX_REMEMBERED_NOTIFICATIONS = 2000;
 
 function reportAudioFailure(error) {
   if (reportedAudioFailure) return;
@@ -15,8 +15,8 @@ function reportAudioFailure(error) {
 }
 
 function loadAlertAudio() {
-  if (alertAudioBuffer || alertAudioLoading) return;
-
+  if (alertAudioBuffer) return Promise.resolve(alertAudioBuffer);
+  if (alertAudioLoading) return alertAudioLoading;
   alertAudioLoading = fetch('/som_corrida.wav')
     .then(response => {
       if (!response.ok) throw new Error(`Não foi possível carregar o som da solicitação (${response.status}).`);
@@ -25,11 +25,14 @@ function loadAlertAudio() {
     .then(audio => audioContext.decodeAudioData(audio))
     .then(buffer => {
       alertAudioBuffer = buffer;
-      if (activeRideIds.length && document.visibilityState !== 'hidden' && !repeatTimer) {
-        schedulePattern();
-      }
+      return buffer;
     })
-    .catch(reportAudioFailure);
+    .catch(error => {
+      alertAudioLoading = null;
+      reportAudioFailure(error);
+      throw error;
+    });
+  return alertAudioLoading;
 }
 
 function playPattern() {
@@ -42,69 +45,52 @@ function playPattern() {
   source.start();
 }
 
-function stopPlayingAudio() {
-  for (const source of activeAudioSources) {
-    source.stop();
-  }
-  activeAudioSources.clear();
-}
-
-function stopTimer() {
-  if (repeatTimer) window.clearTimeout(repeatTimer);
-  repeatTimer = undefined;
-}
-
-function schedulePattern() {
-  if (!activeRideIds.length || document.visibilityState === 'hidden') {
-    stopTimer();
-    return;
-  }
-  if (!alertAudioBuffer) return;
-  playPattern();
-  repeatTimer = window.setTimeout(schedulePattern, (alertAudioBuffer.duration + 2.5) * 1000);
-}
-
 export function unlockRideAlertSound(onError = () => {}) {
   reportAudioError = onError;
   const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
   if (!AudioContextConstructor) return false;
 
   audioContext ||= new AudioContextConstructor();
-  loadAlertAudio();
-  if (audioContext.state === 'suspended') {
-    audioContext.resume().catch(reportAudioFailure);
-  }
+  loadAlertAudio().catch(() => {});
+  if (audioContext.state === 'suspended') audioContext.resume().catch(reportAudioFailure);
   return true;
 }
 
-export function syncRideAlert(rideIds, onError = () => {}) {
-  const nextRideIds = [...new Set(rideIds)].sort();
-  if (nextRideIds.join('|') === activeRideIds.join('|') && (repeatTimer || audioStartPending)) return;
-  activeRideIds = nextRideIds;
-  stopTimer();
-  stopPlayingAudio();
-  if (!activeRideIds.length) return;
+export async function playRideAlertOnce(notificationId, onError = () => {}) {
+  const id = String(notificationId || '').trim();
+  if (!id || playedNotificationIds.has(id)) return false;
+  playedNotificationIds.add(id);
+  if (playedNotificationIds.size > MAX_REMEMBERED_NOTIFICATIONS) {
+    const oldestId = playedNotificationIds.values().next().value;
+    playedNotificationIds.delete(oldestId);
+  }
+  if (document.visibilityState === 'hidden') return false;
 
   if (!unlockRideAlertSound(onError)) {
     reportAudioFailure(new Error('Este dispositivo não oferece suporte ao som de chamadas no app aberto.'));
-    return;
+    return false;
   }
-
-  audioStartPending = true;
-  audioContext.resume().then(() => {
-    audioStartPending = false;
-    if (activeRideIds.length && document.visibilityState !== 'hidden') schedulePattern();
-  }).catch(error => {
-    audioStartPending = false;
-    if (!reportedAudioFailure) {
-      reportedAudioFailure = true;
-      onError(error);
-    }
+  const playback = playbackQueue.then(async () => {
+    await audioContext.resume();
+    await loadAlertAudio();
+    if (document.visibilityState === 'hidden') return false;
+    playPattern();
+    return true;
   });
+  playbackQueue = playback.catch(error => {
+    reportAudioFailure(error);
+    return false;
+  });
+  return await playbackQueue;
 }
 
 export function stopRideAlert() {
-  activeRideIds = [];
-  stopTimer();
-  stopPlayingAudio();
+  for (const source of activeAudioSources) {
+    try {
+      source.stop();
+    } catch (error) {
+      if (error?.name !== 'InvalidStateError') throw error;
+    }
+  }
+  activeAudioSources.clear();
 }

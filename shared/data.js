@@ -1,6 +1,7 @@
 import { supabase, isSupabaseConfigured } from './supabase.js';
 import { isValidBrazilianPlate, isValidUsername, normalizeUsername, normalizeVehiclePlate } from './ride-utils.js';
 import { normalizeCoordinates } from './location-utils.js';
+import { createUuid } from './uuid.js';
 
 const PROFILE_PHOTO_BUCKET = 'vaimoto-profile-photos';
 const profilePhotoCache = new Map();
@@ -106,7 +107,7 @@ export async function uploadOwnProfilePhoto(file) {
   if (userError || !userResult.user) throw new Error('Entre na sua conta para alterar a foto de perfil.');
 
   const extension = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }[file.type];
-  const path = `${userResult.user.id}/${crypto.randomUUID()}.${extension}`;
+  const path = `${userResult.user.id}/${createUuid()}.${extension}`;
   const { error: uploadError } = await supabase.storage
     .from(PROFILE_PHOTO_BUCKET)
     .upload(path, file, { contentType: file.type, cacheControl: '3600', upsert: false });
@@ -389,6 +390,35 @@ export async function getMyReputation() {
   if (error) throw error;
   const result = Array.isArray(data) ? data[0] : data;
   return result || { average_rating: null, review_count: 0 };
+}
+
+export async function getMyDriverEarningsSummary({ todayStart, last7DaysStart, monthStart }) {
+  if (!supabase) throw new Error('Configure o Supabase para consultar os ganhos reais.');
+  const { data, error } = await supabase.rpc('vaimoto_get_my_driver_earnings_summary', {
+    p_today_start: todayStart,
+    p_last_7_days_start: last7DaysStart,
+    p_month_start: monthStart
+  });
+  if (error?.code === '42883') {
+    throw new Error('O banco ainda não tem o painel de ganhos VaiMoto. Execute supabase/vaimoto-driver-earnings.sql no SQL Editor.');
+  }
+  if (error) throw error;
+  return Array.isArray(data) ? data[0] : data;
+}
+
+export async function getMyDriverEarnings({ from = null, to = null, offset = 0 } = {}) {
+  if (!supabase) throw new Error('Configure o Supabase para consultar o histórico real de ganhos.');
+  const { data, error } = await supabase.rpc('vaimoto_get_my_driver_earnings', {
+    p_from: from,
+    p_to: to,
+    p_limit: 100,
+    p_offset: offset
+  });
+  if (error?.code === '42883') {
+    throw new Error('O banco ainda não tem o histórico de ganhos VaiMoto. Execute supabase/vaimoto-driver-earnings.sql no SQL Editor.');
+  }
+  if (error) throw error;
+  return data || [];
 }
 
 export async function getActiveDriverRide() {

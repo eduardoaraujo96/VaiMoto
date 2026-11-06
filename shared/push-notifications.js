@@ -1,9 +1,12 @@
 import { Capacitor } from '@capacitor/core';
 import { PushNotifications } from '@capacitor/push-notifications';
 import { supabase } from './supabase.js';
+import { createUuid } from './uuid.js';
 
-const CHANNEL_ID = 'ride-alerts';
-const RIDE_REQUEST_CHANNEL_ID = 'ride-requests-v2';
+const CHANNEL_ID = 'ride-alerts-v2';
+const RIDE_REQUEST_CHANNEL_ID = 'ride-requests-v3';
+const CUSTOMER_OFFERS_CHANNEL_ID = 'ride-offers-v1';
+const SILENT_UPDATE_CHANNEL_ID = 'ride-updates-silent';
 let listenersReady = false;
 let currentConfig = null;
 
@@ -11,7 +14,7 @@ function deviceIdForRole(appRole) {
   const key = `vaimoto.push-device-id.${appRole}`;
   let deviceId = localStorage.getItem(key);
   if (!deviceId) {
-    deviceId = crypto.randomUUID();
+    deviceId = createUuid();
     localStorage.setItem(key, deviceId);
   }
   return deviceId;
@@ -45,6 +48,27 @@ export async function initializePushNotifications(config) {
       vibration: true,
       lights: true,
       lightColor: '#16A34A'
+    });
+    if (config.appRole === 'customer') {
+      await PushNotifications.createChannel({
+        id: CUSTOMER_OFFERS_CHANNEL_ID,
+        name: 'Novas propostas',
+        description: 'Novas propostas de mototaxistas',
+        importance: 5,
+        visibility: 1,
+        vibration: true,
+        lights: true,
+        lightColor: '#16A34A'
+      });
+    }
+    await PushNotifications.createChannel({
+      id: SILENT_UPDATE_CHANNEL_ID,
+      name: 'Atualizações de corrida',
+      description: 'Atualizações silenciosas de corridas canceladas ou encerradas',
+      importance: 2,
+      visibility: 1,
+      vibration: false,
+      lights: false
     });
 
     if (config.appRole === 'driver') {

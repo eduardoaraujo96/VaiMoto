@@ -121,11 +121,13 @@ O app e a Edge Function já estão preparados para esse modelo isolado. Nenhuma 
 
 ## Notificações de corrida (Android)
 
-O mototaxista recebe alertas sonoros repetidos com o arquivo `som_corrida.wav` enquanto o app está aberto, online e há solicitações sem proposta enviada. Enviar uma proposta, ficar offline ou ocultar o app interrompe a repetição. Em segundo plano, a notificação push de nova corrida usa o som personalizado do canal Android; não é usado serviço de som contínuo em segundo plano. O passageiro recebe push de novas propostas e mudanças de estado da corrida. O app pede permissão no contexto de uso: ao ficar online (mototaxista) ou ao solicitar corrida (passageiro).
+Cada nova solicitação gera no máximo um alerta sonoro no app aberto. O ID da corrida deduplica o evento recebido por Realtime e push; atualizações e consultas da lista não reproduzem o som. Em segundo plano, a notificação push de nova corrida usa o som personalizado do canal Android, sem serviço de áudio contínuo. Atualizações de cancelamento substituem a notificação da corrida em um canal silencioso. O passageiro recebe push de novas propostas e mudanças de estado. O app pede permissão no contexto de uso: ao ficar online (mototaxista) ou ao solicitar corrida (passageiro).
 
-O canal Android `ride-requests-v2` é criado no início do app do mototaxista, antes da solicitação de registro no FCM, com importância máxima, visibilidade pública, vibração e o som `som_corrida`. O WAV precisa estar tanto em `android/driver/app/src/main/res/raw/` (som das notificações nativas) quanto em `driver-app/public/` (alerta sonoro enquanto o app está aberto). O backend escolhe esse canal apenas para novas solicitações; outros tipos de push continuam no canal `ride-alerts`. A configuração `presentationOptions` controla a apresentação em primeiro plano no iOS, não a apresentação Android.
+No app do passageiro, cada `INSERT` de proposta pendente recebido para a corrida ativa toca `notificacaoCliente/notificationCliente.mp3` uma vez por ID da proposta. Atualizações, histórico carregado e propostas de outras corridas não tocam o áudio. O arquivo é incluído pelo Vite sem cópia manual; restrições de autoplay deixam a reprodução pendente até a próxima interação do usuário. Em segundo plano, o alerta depende da notificação push do Android. A Edge Function deduplica esses pushes pela proposta, então reimplante `send-push` depois de atualizar o código e confirme que `vaimoto-push-idempotency.sql` foi executada.
 
-O canal mantém as preferências definidas pelo usuário e o Android não as substitui ao recriar o canal com o mesmo ID. Para um teste limpo, desinstale e reinstale o app ou abra **Configurações → Apps → VaiMoto → Notificações → Novas corridas** e confira som/vibração. Se precisar mudar as configurações de um canal já instalado em produção, use um novo ID de canal e envie esse mesmo ID no payload FCM.
+O canal Android `ride-requests-v3` é criado no início do app do mototaxista, antes da solicitação de registro no FCM, com importância máxima, visibilidade pública, vibração e o som `som_corrida`. O WAV precisa estar tanto em `android/driver/app/src/main/res/raw/` (som das notificações nativas) quanto em `driver-app/public/` (alerta sonoro enquanto o app está aberto). O app do passageiro cria `ride-offers-v1` para novas propostas com o som padrão do Android; estados gerais usam `ride-alerts-v2`. IDs versionados evitam que as configurações silenciosas de canais antigos impeçam o som. O backend escolhe `ride-requests-v3` para novas solicitações, `ride-offers-v1` para propostas e `ride-updates-silent` para cancelamentos. Eventos push de novas corridas e propostas são deduplicados no servidor. A configuração `presentationOptions` controla a apresentação em primeiro plano no iOS, não a apresentação Android.
+
+O canal mantém as preferências definidas pelo usuário e o Android não as substitui ao recriar o canal com o mesmo ID. Para um teste limpo, desinstale e reinstale o app ou abra **Configurações → Apps → VaiMoto → Notificações** e confira som/vibração dos canais **Novas corridas** e **Novas propostas**.
 
 1. No Firebase, configure os apps Android com os IDs `com.vaimoto.app` e `com.vaimoto.driver`. Coloque os respectivos arquivos `google-services.json` em `android/customer/app/` e `android/driver/app/`. Esses arquivos são configuração local e ficam ignorados pelo Git; não os publique nem os inclua em commits.
 2. Em um projeto VaiMoto dedicado, execute `supabase/push-notifications.sql` depois das migrações de perfil e corridas. No projeto FlashTaxi existente, a tabela isolada de dispositivos já é criada por `supabase/vaimoto-isolated.sql`; não execute o SQL genérico de push.
@@ -136,8 +138,9 @@ O canal mantém as preferências definidas pelo usuário e o Android não as sub
    supabase functions deploy send-push --no-verify-jwt
    ```
 
-5. Em **Database → Webhooks**, em um projeto VaiMoto dedicado, crie webhooks `POST` para `rides` em `INSERT` e `UPDATE`, e `ride_offers` em `INSERT`. No projeto FlashTaxi existente, use `vaimoto_rides` em `INSERT` e `UPDATE`, e `vaimoto_ride_offers` em `INSERT`. Use como URL `https://SEU-PROJETO.supabase.co/functions/v1/send-push` e envie o cabeçalho `x-webhook-secret` com o mesmo valor configurado em `PUSH_WEBHOOK_SECRET` (projeto dedicado) ou `VAIMOTO_PUSH_WEBHOOK_SECRET` (FlashTaxi isolado).
-6. Sincronize e compile os dois apps com os comandos Android acima, instale-os, permita notificações no Android e teste com contas reais separadas. Confirme no sistema que o canal **Chamados e corridas** não está silenciado. O cliente precisa de uma solicitação ativa e o mototaxista precisa estar aprovado e online.
+5. Execute `supabase/vaimoto-push-idempotency.sql` no projeto Supabase VaiMoto (dedicado ou isolado) antes de implantar a Edge Function atualizada; ela é necessária para deduplicar as notificações de novas corridas e propostas.
+6. Em **Database → Webhooks**, em um projeto VaiMoto dedicado, crie webhooks `POST` para `rides` em `INSERT` e `UPDATE`, e `ride_offers` em `INSERT`. No projeto FlashTaxi existente, use `vaimoto_rides` em `INSERT` e `UPDATE`, e `vaimoto_ride_offers` em `INSERT`. Use como URL `https://SEU-PROJETO.supabase.co/functions/v1/send-push` e envie o cabeçalho `x-webhook-secret` com o mesmo valor configurado em `PUSH_WEBHOOK_SECRET` (projeto dedicado) ou `VAIMOTO_PUSH_WEBHOOK_SECRET` (FlashTaxi isolado).
+7. Sincronize e compile os dois apps com os comandos Android acima, instale-os, permita notificações no Android e teste com contas reais separadas. Confirme no sistema que o canal **Novas corridas** não está silenciado. O cliente precisa de uma solicitação ativa e o mototaxista precisa estar aprovado e online.
 
 Se criar uma corrida ou enviar uma proposta falhar com `invalid input syntax for type json`, o trigger `supabase_functions.http_request` em `vaimoto_rides` ou `vaimoto_ride_offers` está com cabeçalhos inválidos e aborta a transação. Execute `supabase/disable-broken-push-triggers.sql` no SQL Editor para remover esses triggers e desbloquear o fluxo. Depois, recrie o push em **Database → Webhooks** (recomendado) ou, se precisar recriar os triggers HTTP, gere um segredo novo, atualize `VAIMOTO_PUSH_WEBHOOK_SECRET` nas Edge Function Secrets e execute `supabase/fix-vaimoto-push-trigger.sql`, substituindo o placeholder pelo mesmo segredo. Não salve nem versione o arquivo com o segredo preenchido.
 
@@ -145,16 +148,20 @@ Para receber solicitações abertas e atualizações de propostas em tempo real 
 
 O canal Android de novas corridas usa importância máxima e `som_corrida.wav`. A entrega em segundo plano depende da permissão de notificações, das configurações de bateria/rede do aparelho e da configuração correta do Firebase para cada `applicationId`. Depois de alterar o backend, reimplante a Edge Function `send-push`; depois de alterar o arquivo/recursos nativos, sincronize e recompile o app mototaxista.
 
-## Testar a conversa entre cliente e mototaxista
-1. Configure os mesmos valores Supabase nos dois apps e aplique o SQL na ordem acima. Cada app tem sessão de login própria, então entre com a conta do cliente em `http://localhost:5173` e com a conta do mototaxista em `http://localhost:5174`.
+## Chat, ganhos e testes ponta a ponta
+
+Após a migração-base isolada do VaiMoto, execute `supabase/vaimoto-ride-chat.sql` e `supabase/vaimoto-driver-earnings.sql`. O primeiro cria as mensagens, recibos de leitura, políticas RLS e publicação Realtime; o segundo registra `final_fare` no banco ao concluir a corrida usando o preço da proposta aceita, protege esse valor contra alterações posteriores e cria as RPCs de ganhos. Corridas históricas concluídas são preenchidas com o valor da proposta aceita; a migração falha explicitamente se encontrar corrida concluída sem proposta aceita.
+
+1. Configure os mesmos valores Supabase nos dois apps e aplique as migrations na ordem acima. Cada app tem sessão de login própria, então entre com a conta do cliente em `http://localhost:5173` e com a conta do mototaxista em `http://localhost:5174`.
 2. Aprove o perfil do mototaxista após revisar o cadastro. Em “Minha conta”, carregue uma foto de perfil e preencha tipo, cor e placa válida do veículo; então fique online no painel.
 3. No app do cliente, entre na conta, carregue uma foto de perfil, informe partida e destino e solicite a corrida.
 4. A solicitação aparece no painel do mototaxista online, junto à foto e ao nome do passageiro. Envie uma proposta; ela surge na área “Propostas” do cliente com a foto e o nome do mototaxista.
-5. Aceite a proposta no app do cliente. O cronômetro de chegada usa um prazo salvo no banco e continua após recarregar; o profissional recebe a confirmação em tempo real e vê a foto do passageiro e as ações de iniciar a viagem ou cancelar.
-6. Inicie a viagem pelo app profissional. Confirme que o cliente acompanha o status e que as duas fotos permanecem visíveis. O cancelamento comum fica bloqueado após o início.
-7. No app profissional, confirme “Corrida finalizada”. O cliente deve receber o status em tempo real, e a corrida deve permanecer no histórico dos dois apps mesmo após recarregar ou entrar novamente.
-8. Envie avaliações diferentes nos dois apps. Confirme que cada pessoa só pode avaliar a outra uma vez, que o histórico mostra avaliações pendentes até o envio e que a reputação mostra a média e a quantidade reais (ou “Sem avaliações”).
-9. Repita a tentativa de iniciar outra corrida antes de concluir a atual: o banco deve impedir uma segunda corrida ativa para o mesmo mototaxista. Após concluir, a escolha de disponibilidade online/offline deve permanecer como estava.
+5. Aceite a proposta no app do cliente. O cronômetro de chegada usa um prazo salvo no banco e continua após recarregar; o profissional recebe a confirmação em tempo real e vê a foto do passageiro e as ações de iniciar a viagem ou cancelar. Abra **Mensagens** nos dois apps e confira envio, recebimento em tempo real, identificação do remetente, horário e indicador de não lidas.
+6. Inicie a viagem pelo app profissional. Confirme que o cliente acompanha o status, as duas fotos permanecem visíveis e ambos continuam enviando mensagens. O cancelamento comum fica bloqueado após o início.
+7. No app profissional, confirme “Corrida finalizada”. O cliente deve receber o status em tempo real, as mensagens ficam disponíveis apenas para consulta e o valor da proposta aceita aparece nos ganhos. Confira hoje, últimos 7 dias, mês, total acumulado e histórico por período.
+8. Cancele outra corrida confirmada e confirme que ela não entra nos ganhos, que o chat fica somente para consulta e que a notificação do aparelho é substituída sem som de nova solicitação.
+9. Envie avaliações diferentes nos dois apps. Confirme que cada pessoa só pode avaliar a outra uma vez, que o histórico mostra avaliações pendentes até o envio e que a reputação mostra a média e a quantidade reais (ou “Sem avaliações”).
+10. Repita a tentativa de iniciar outra corrida antes de concluir a atual: o banco deve impedir uma segunda corrida ativa para o mesmo mototaxista. Após concluir, a escolha de disponibilidade online/offline deve permanecer como estava.
 
 Mantenha os dois apps abertos durante esse teste. Se a conexão cair, recarregue a página: solicitações ativas e propostas são sincronizadas novamente com o banco ao entrar na conta.
 O painel também consulta solicitações abertas periodicamente e oferece atualização manual como alternativa ao Realtime. O profissional precisa estar aprovado e online; o cliente precisa estar autenticado.
@@ -173,6 +180,7 @@ vaimoto/
 │   └── src/main.js
 ├── shared/                # Cliente Supabase, acesso a dados, UI e estilos comuns
 │   ├── data.js
+│   ├── ride-chat.js
 │   ├── demo-data.js
 │   ├── supabase.js
 │   ├── styles.css
@@ -183,6 +191,9 @@ vaimoto/
 ├── supabase/ride-enhancements.sql # Veículos, username, cronômetro e ações da corrida
 ├── supabase/ride-completion-reviews.sql # Finalização, histórico, avaliações e reputação
 ├── supabase/vaimoto-isolated.sql # Integração isolada para projetos FlashTaxi existentes
+├── supabase/vaimoto-ride-chat.sql # Chat de corrida, RLS e Realtime
+├── supabase/vaimoto-driver-earnings.sql # Valor final imutável e consultas financeiras
+├── supabase/vaimoto-push-idempotency.sql # Deduplicação de push por corrida
 ├── native/customer/       # Configuração Capacitor do app de passageiro
 ├── native/driver/         # Configuração Capacitor do app de mototaxista
 ├── android/customer/      # Projeto Android nativo do passageiro
@@ -202,7 +213,9 @@ vaimoto/
 - Autenticação por e-mail e senha usando Supabase quando configurado.
 - Inserção de solicitações e propostas reais quando o Supabase está configurado e o usuário está autenticado.
 - Atualização em tempo real das solicitações abertas e propostas; aceite por RPC transacional que confirma uma única proposta e notifica o mototaxista.
-- Push Android de solicitações, propostas e atualizações de estado; alerta sonoro repetido apenas no app aberto do mototaxista enquanto houver solicitações ainda sem resposta.
+- Chat por corrida entre participantes, com histórico, leitura, envio em tempo real e RLS.
+- Painel de ganhos do mototaxista baseado somente em corridas concluídas e preço da proposta aceita.
+- Push Android de solicitações, propostas e atualizações de estado; cada nova solicitação toca uma vez e cancelamentos não geram som de nova corrida.
 - Solicitações visíveis apenas para mototaxistas aprovados e online; a disponibilidade é restaurada do banco ao entrar no app.
 - O cliente retoma corridas ativas após entrar novamente e acompanha status, propostas e o valor aceito.
 - Cronômetro de chegada persistente; o cliente vê nome de usuário e dados do veículo após a confirmação. Passageiro e mototaxista podem cancelar antes do início, e o profissional pode iniciar a viagem.

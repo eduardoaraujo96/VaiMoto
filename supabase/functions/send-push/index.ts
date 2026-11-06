@@ -106,6 +106,15 @@ Deno.serve(async request => {
   const messages: PushMessage[] = [];
 
   if (isRideTable && payload.type === 'INSERT' && record.status === 'searching') {
+    const eventKey = `new-ride:${String(record.id)}`;
+    const { data: claimedEvent, error: eventError } = await supabase
+      .from('vaimoto_push_events')
+      .upsert({ event_key: eventKey }, { onConflict: 'event_key', ignoreDuplicates: true })
+      .select('event_key')
+      .maybeSingle();
+    if (eventError) return jsonResponse({ error: 'Could not claim the new ride notification event.' }, 500);
+    if (!claimedEvent) return jsonResponse({ sent: 0, duplicate: true });
+
     const { data: drivers, error: driversError } = await supabase
       .from('profiles')
       .select('id')
@@ -128,7 +137,11 @@ Deno.serve(async request => {
           appRole: 'driver',
           title: 'Nova solicitação de corrida',
           body: 'Um passageiro está procurando mototaxista. Toque para conferir.',
-          data: { kind: 'new_ride', ride_id: String(record.id) },
+          data: {
+            kind: 'new_ride',
+            ride_id: String(record.id),
+            notification_id: `new-ride:${String(record.id)}`
+          },
           notificationTag: `ride-${String(record.id)}`
         });
       }
@@ -142,14 +155,28 @@ Deno.serve(async request => {
       .eq('id', record.ride_id)
       .maybeSingle();
     if (error) return jsonResponse({ error: 'Could not load the ride for this offer.' }, 500);
-    if (ride && ['searching', 'offered'].includes(ride.status)) {
+    if (record.status === 'pending' && ride && ['searching', 'offered'].includes(ride.status)) {
+      const eventKey = `new-offer:${String(record.id)}`;
+      const { data: claimedEvent, error: eventError } = await supabase
+        .from('vaimoto_push_events')
+        .upsert({ event_key: eventKey }, { onConflict: 'event_key', ignoreDuplicates: true })
+        .select('event_key')
+        .maybeSingle();
+      if (eventError) return jsonResponse({ error: 'Could not claim the new offer notification event.' }, 500);
+      if (!claimedEvent) return jsonResponse({ sent: 0, duplicate: true });
+
       messages.push({
         userId: ride.customer_id as string,
         appRole: 'customer',
         title: 'Nova proposta de corrida',
         body: 'Um mototaxista enviou uma proposta. Toque para ver os detalhes.',
-        data: { kind: 'new_offer', ride_id: String(ride.id), offer_id: String(record.id) },
-        notificationTag: `ride-${String(ride.id)}`
+        data: {
+          kind: 'new_offer',
+          ride_id: String(ride.id),
+          offer_id: String(record.id),
+          notification_id: `new-offer:${String(record.id)}`
+        },
+        notificationTag: `offer-${String(record.id)}`
       });
     }
   }
@@ -222,6 +249,8 @@ Deno.serve(async request => {
   const accessToken = await getFcmAccessToken(account);
   const results = await Promise.all(deliveries.map(async ({ device, message }) => {
     const isNewRideRequest = message.data.kind === 'new_ride';
+    const isNewOffer = message.data.kind === 'new_offer';
+    const isCancelledRide = message.data.status === 'cancelled';
     const response = await fetch(
       `https://fcm.googleapis.com/v1/projects/${encodeURIComponent(account.project_id)}/messages:send`,
       {
@@ -239,8 +268,14 @@ Deno.serve(async request => {
               priority: 'HIGH',
               collapse_key: message.notificationTag,
               notification: {
-                channel_id: isNewRideRequest ? 'ride-requests-v2' : 'ride-alerts',
-                sound: isNewRideRequest ? 'som_corrida' : 'default',
+                channel_id: isNewRideRequest
+                  ? 'ride-requests-v3'
+                  : isNewOffer
+                    ? 'ride-offers-v1'
+                  : isCancelledRide
+                    ? 'ride-updates-silent'
+                    : 'ride-alerts-v2',
+                ...(isNewRideRequest ? { sound: 'som_corrida' } : {}),
                 tag: message.notificationTag
               }
             },
@@ -250,7 +285,7 @@ Deno.serve(async request => {
               },
               payload: {
                 aps: {
-                  sound: 'default'
+                  ...(isCancelledRide ? {} : { sound: 'default' })
                 }
               }
             }

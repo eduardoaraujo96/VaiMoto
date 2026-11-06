@@ -2,17 +2,18 @@ import '../../shared/styles.css';
 import './driver.css';
 import { demoRideRequests } from '../../shared/demo-data.js';
 import { isSupabaseConfigured, supabase, subscribeToPostgresChanges, removeRealtimeChannel } from '../../shared/supabase.js';
-import { signIn, signUp, signOut, getCurrentUser, getDriverProfile, getOwnProfile, updateOwnProfile, uploadOwnProfilePhoto, getDriverAvailability, setDriverAvailability, getActiveDriverRide, getDriverRideOffer, getDriverRideCustomer, updateDriverLocation, startRide, completeRide, cancelRide, submitOffer, submitRideReview, getMyRideHistory, getMyReputation } from '../../shared/data.js';
+import { signIn, signUp, signOut, getCurrentUser, getDriverProfile, getOwnProfile, updateOwnProfile, uploadOwnProfilePhoto, getDriverAvailability, setDriverAvailability, getActiveDriverRide, getDriverRideOffer, getDriverRideCustomer, updateDriverLocation, startRide, completeRide, cancelRide, submitOffer, submitRideReview, getMyRideHistory, getMyReputation, getMyDriverEarningsSummary, getMyDriverEarnings } from '../../shared/data.js';
 import { money, escapeHtml, showToast, profileAvatar, bindProfileAvatarFallbacks } from '../../shared/ui.js';
 import { formatRemainingTime, getRemainingSeconds, updateArrivalCountdowns } from '../../shared/ride-utils.js';
 import { nativeAuthRedirectUrl, registerNativeAppHandlers } from '../../shared/native-app.js';
 import { clearPushNotificationForRide, enablePushNotifications, initializePushNotifications, registerPushNotificationsIfPermitted, removePushDevice } from '../../shared/push-notifications.js';
-import { stopRideAlert, syncRideAlert, unlockRideAlertSound } from '../../shared/ride-alert.js';
+import { playRideAlertOnce, stopRideAlert, unlockRideAlertSound } from '../../shared/ride-alert.js';
 import { watchCurrentPosition } from '../../shared/location.js';
 import { distanceBetweenMeters, normalizeCoordinates } from '../../shared/location-utils.js';
 import { mountRideMap, rideMapCardMarkup } from '../../shared/ride-map.js';
+import { bindRideChatControls, getRideChat, markRideChatRead, rideChatButtonMarkup, rideChatDialogMarkup, sendRideChatMessage, subscribeToRideChat, getRideChatUnreadCount } from '../../shared/ride-chat.js';
 const app=document.querySelector('#app');
-const state={view:'dashboard',available:false,availabilityBusy:false,authBusy:false,requests:[],rideCustomers:{},offers:[],driverLocation:null,driverMapSelectionMode:'driver',locationSaveInProgress:false,user:null,isDriver:false,driverApprovalStatus:null,profile:null,authUserId:null,rideChannel:null,offerChannel:null,reviewChannel:null,realtimeStarting:false,realtimeStatus:'desconectado',authMode:'login',busy:false,activeRide:null,currentRide:null,rideSyncGeneration:0,rideHistory:[],reputation:{average_rating:null,review_count:0},reviewDrafts:{},editingProfile:false};
+const state={view:'dashboard',available:false,availabilityBusy:false,authBusy:false,requests:[],rideCustomers:{},offers:[],driverLocation:null,driverMapSelectionMode:'driver',locationSaveInProgress:false,user:null,isDriver:false,driverApprovalStatus:null,profile:null,authUserId:null,rideChannel:null,offerChannel:null,reviewChannel:null,chatChannel:null,chatRealtimeRideId:null,chatRideId:null,chatRideStatus:null,chatMessages:[],chatUnreadByRide:{},chatUserId:null,chatLoading:false,chatSending:false,chatError:null,chatOpen:false,earningsSummary:null,earningsRows:[],earningsLoading:false,earningsError:null,earningsFrom:'',earningsTo:'',earningsOffset:0,earningsHasMore:false,earningsRequestId:0,realtimeStarting:false,realtimeStatus:'desconectado',authMode:'login',busy:false,activeRide:null,currentRide:null,rideSyncGeneration:0,rideHistory:[],reputation:{average_rating:null,review_count:0},reviewDrafts:{},editingProfile:false};
 let openRideRefreshTimer=null;
 let openRideRefreshPromise=null;
 let pendingPushAction=null;
@@ -25,6 +26,18 @@ let locationWatchStarting=false;
 let sessionSyncPromise=Promise.resolve();
 let hydratedDriverUserId=null;
 const nav=[{id:'dashboard',icon:'⌂',label:'Início'},{id:'requests',icon:'⇄',label:'Corridas'},{id:'history',icon:'◷',label:'Ganhos'},{id:'account',icon:'♙',label:'Perfil'}];
+let soundUnlockListenersReady=false;
+function prepareRideAlertUnlock(){
+ if(soundUnlockListenersReady)return;
+ soundUnlockListenersReady=true;
+ const unlock=()=>{
+  document.removeEventListener('pointerdown',unlock,true);
+  document.removeEventListener('touchstart',unlock,true);
+  unlockRideAlertSound(error=>showToast(error.message||'Não foi possível preparar o som de solicitações.','error'));
+ };
+ document.addEventListener('pointerdown',unlock,{once:true,capture:true});
+ document.addEventListener('touchstart',unlock,{once:true,capture:true});
+}
 const header=()=>`<header class="topbar"><a class="brand" href="#" data-view="dashboard" aria-label="VaiMoto, início"><span class="brand-mark">V</span><span class="brand-name">Vai<span>Moto</span></span></a><div class="top-actions"><span class="status-pill ${isSupabaseConfigured?'':'demo-pill'}">${isSupabaseConfigured?'BETA':'Modo demonstração'}</span></div></header>`;
 const navHtml=cls=>`<nav class="${cls}" aria-label="Navegação principal">${nav.map(n=>`<button type="button" class="nav-item ${state.view===n.id?'active':''}" data-view="${n.id}" aria-current="${state.view===n.id?'page':'false'}"><span class="nav-icon" aria-hidden="true">${n.icon}</span><span>${n.label}</span></button>`).join('')}</nav>`;
 const heading=(eyebrow,title,desc)=>`<div class="page-heading"><div><div class="eyebrow">${eyebrow}</div><h1>${title}</h1><p>${desc}</p></div></div>`;
@@ -38,7 +51,7 @@ function locationSourceNote(ride){
  }
  return `<p class="field-help">Partida: ${escapeHtml(pickup)} · destino: ${escapeHtml(destination)}.</p>`;
 }
-function render(){if(isSupabaseConfigured&&state.user&&state.isDriver&&(!state.rideChannel||!state.offerChannel)&&!state.realtimeStarting){state.realtimeStarting=true;startDriverRealtime().catch(error=>showToast(error.message||'Não foi possível iniciar as atualizações em tempo real.','error')).finally(()=>{state.realtimeStarting=false;render()})}let content=state.view==='dashboard'?dashboard():state.view==='requests'?requests():state.view==='history'?history():account();app.innerHTML=`${header()}<div class="layout"><aside class="sidebar"><div class="nav-label">ÁREA DO PROFISSIONAL</div><nav class="nav-list" aria-label="Navegação principal">${nav.map(n=>`<button type="button" class="nav-item ${state.view===n.id?'active':''}" data-view="${n.id}" aria-current="${state.view===n.id?'page':'false'}"><span class="nav-icon" aria-hidden="true">${n.icon}</span>${n.label}</button>`).join('')}</nav><div class="side-note"><strong>Você no controle</strong>Ative sua disponibilidade quando estiver pronto para receber solicitações.</div></aside><main class="main">${state.currentRide?activeRideCard():''}${content}<div class="footer-note">VaiMoto · Painel do mototaxista · ${isSupabaseConfigured?'configuração Supabase detectada':'dados demonstrativos'}</div></main></div>${navHtml('bottom-nav')}`;syncRideAlert(isSupabaseConfigured&&state.isDriver&&state.available&&document.visibilityState==='visible'?state.requests.map(ride=>String(ride.id)):[],error=>showToast(error.message||'Não foi possível reproduzir o alerta da solicitação.','error'));bind();bindProfileAvatarFallbacks(app);updateArrivalCountdowns(app)}
+function render(){if(isSupabaseConfigured&&state.user&&state.isDriver&&(!state.rideChannel||!state.offerChannel)&&!state.realtimeStarting){state.realtimeStarting=true;startDriverRealtime().catch(error=>showToast(error.message||'Não foi possível iniciar as atualizações em tempo real.','error')).finally(()=>{state.realtimeStarting=false;render()})}let content=state.view==='dashboard'?dashboard():state.view==='requests'?requests():state.view==='history'?history():account();app.innerHTML=`${header()}<div class="layout"><aside class="sidebar"><div class="nav-label">ÁREA DO PROFISSIONAL</div><nav class="nav-list" aria-label="Navegação principal">${nav.map(n=>`<button type="button" class="nav-item ${state.view===n.id?'active':''}" data-view="${n.id}" aria-current="${state.view===n.id?'page':'false'}"><span class="nav-icon" aria-hidden="true">${n.icon}</span>${n.label}</button>`).join('')}</nav><div class="side-note"><strong>Você no controle</strong>Ative sua disponibilidade quando estiver pronto para receber solicitações.</div></aside><main class="main">${state.currentRide?activeRideCard():''}${content}<div class="footer-note">VaiMoto · Painel do mototaxista · ${isSupabaseConfigured?'configuração Supabase detectada':'dados demonstrativos'}</div></main></div>${navHtml('bottom-nav')}${rideChatDialogMarkup({rideId:state.chatRideId,messages:state.chatMessages,userId:state.chatUserId,open:state.chatOpen,loading:state.chatLoading,sending:state.chatSending,error:state.chatError,canSend:['confirmed','in_progress'].includes(state.chatRideStatus),otherSenderLabel:'Passageiro'})}`;bind();bindRideChatControls(app,{onOpen:rideId=>openRideChat(rideId),onClose:closeRideChat,onRetry:rideId=>loadRideChat(rideId),onSend:(rideId,body)=>sendChatMessage(rideId,body)});bindProfileAvatarFallbacks(app);updateArrivalCountdowns(app)}
 const renderWithoutMap = render;
 render = function renderWithMap() {
  rideMapController?.destroy();
@@ -46,26 +59,139 @@ render = function renderWithMap() {
  renderWithoutMap();
  mountDriverRideMap();
 };
+function appendDriverChatMessage(message){
+ if(!message?.id||state.chatRideId!==message.ride_id)return;
+ if(!state.chatMessages.some(item=>item.id===message.id)){
+  state.chatMessages=[...state.chatMessages,message];
+  state.chatMessages.sort((a,b)=>new Date(a.created_at)-new Date(b.created_at)||a.id.localeCompare(b.id));
+ }
+}
+function ensureDriverChatRealtime(rideId){
+ if(!supabase||!state.user||!rideId)return;
+ if(state.chatRealtimeRideId===rideId&&state.chatChannel)return;
+ state.chatUserId=state.user.id;
+ const previous=state.chatChannel;
+ state.chatChannel=null;
+ state.chatRealtimeRideId=rideId;
+ if(previous)removeRealtimeChannel(previous).catch(error=>showToast(error.message||'Não foi possível encerrar o canal de mensagens anterior.','error'));
+ state.chatChannel=subscribeToRideChat(rideId,payload=>{
+  const message=payload.new;
+  if(state.chatRealtimeRideId!==rideId||!message?.id)return;
+  appendDriverChatMessage(message);
+  if(message.sender_id!==state.chatUserId){
+   if(state.chatOpen&&state.chatRideId===rideId){
+    markRideChatRead(rideId).then(()=>{
+     state.chatUnreadByRide={...state.chatUnreadByRide,[rideId]:0};
+     render();
+    }).catch(error=>{state.chatError=error.message||'Não foi possível atualizar as mensagens lidas.';render()});
+   }else{
+    getRideChatUnreadCount(rideId).then(count=>{
+     state.chatUnreadByRide={...state.chatUnreadByRide,[rideId]:count};
+     render();
+    }).catch(error=>showToast(error.message||'Não foi possível atualizar o indicador de mensagens não lidas.','error'));
+   }
+  }else if(state.chatOpen&&state.chatRideId===rideId)render();
+ },status=>{
+  if(state.chatRealtimeRideId!==rideId)return;
+  if(status==='CHANNEL_ERROR'||status==='TIMED_OUT'){
+   state.chatError='A conexão em tempo real das mensagens falhou. Verifique a conexão e tente novamente.';
+   if(state.chatOpen&&state.chatRideId===rideId)render();
+   else showToast(state.chatError,'error');
+  }
+ });
+ getRideChatUnreadCount(rideId).then(count=>{
+  if(state.chatRealtimeRideId===rideId){
+   state.chatUnreadByRide={...state.chatUnreadByRide,[rideId]:count};
+   render();
+  }
+ }).catch(error=>{
+  if(state.chatRealtimeRideId===rideId&&state.chatOpen&&state.chatRideId===rideId){
+   state.chatError=error.message||'Não foi possível carregar mensagens não lidas.';
+   render();
+  }else if(state.chatRealtimeRideId===rideId)showToast(error.message||'Não foi possível carregar mensagens não lidas.','error');
+ });
+}
+async function loadRideChat(rideId){
+ const targetRideId=String(rideId||'');
+ if(!targetRideId)return;
+ state.chatRideId=targetRideId;
+ state.chatLoading=true;
+ state.chatError=null;
+ render();
+ try{
+  ensureDriverChatRealtime(targetRideId);
+  const conversation=await getRideChat(targetRideId);
+  if(state.chatRideId!==targetRideId)return;
+  state.chatUserId=conversation.userId;
+  const received=state.chatMessages.filter(message=>message.ride_id===targetRideId);
+  state.chatMessages=[...new Map([...conversation.messages,...received].map(message=>[message.id,message])).values()]
+   .sort((a,b)=>new Date(a.created_at)-new Date(b.created_at)||a.id.localeCompare(b.id));
+  state.chatUnreadByRide={...state.chatUnreadByRide,[targetRideId]:conversation.unreadCount};
+  await markRideChatRead(targetRideId);
+  state.chatUnreadByRide={...state.chatUnreadByRide,[targetRideId]:0};
+ }catch(error){
+  if(state.chatRideId===targetRideId)state.chatError=error.message||'Não foi possível carregar as mensagens desta corrida.';
+ }finally{
+  if(state.chatRideId===targetRideId){state.chatLoading=false;render()}
+ }
+}
+function openRideChat(rideId){
+ const targetRideId=String(rideId||'');
+ const historyRide=state.rideHistory.find(ride=>ride.ride_id===targetRideId);
+ state.chatRideStatus=targetRideId===state.currentRide?.id?state.currentRide.status:historyRide?.status;
+ state.chatOpen=true;
+ state.chatMessages=[];
+ state.chatUserId=state.user?.id||null;
+ loadRideChat(targetRideId);
+}
+function closeRideChat(){
+ state.chatOpen=false;
+ state.chatError=null;
+ if(state.currentRide?.id!==state.chatRealtimeRideId){
+  const channel=state.chatChannel;
+  state.chatChannel=null;
+  state.chatRealtimeRideId=null;
+  if(channel)removeRealtimeChannel(channel).catch(error=>showToast(error.message||'Não foi possível encerrar o canal de mensagens.','error'));
+ }
+ render();
+}
+async function sendChatMessage(rideId,body){
+ if(!['confirmed','in_progress'].includes(state.chatRideStatus)||state.chatSending)return;
+ state.chatSending=true;
+ state.chatError=null;
+ render();
+ try{
+  const message=await sendRideChatMessage(rideId,body);
+  appendDriverChatMessage(message);
+  await markRideChatRead(rideId);
+  state.chatUnreadByRide={...state.chatUnreadByRide,[rideId]:0};
+ }catch(error){
+  state.chatError=error.message||'Não foi possível enviar a mensagem.';
+ }finally{
+  state.chatSending=false;
+  render();
+ }
+}
 function driverMapPoints(){
  const points=[];
  if(state.currentRide){
   if(state.currentRide.pickup_latitude!==null&&state.currentRide.pickup_latitude!==undefined){
-   points.push({type:'pickup',label:state.currentRide.pickup_text||'Partida',latitude:state.currentRide.pickup_latitude,longitude:state.currentRide.pickup_longitude});
+   points.push({id:`pickup:${state.currentRide.id}`,type:'pickup',label:state.currentRide.pickup_text||'Partida',latitude:state.currentRide.pickup_latitude,longitude:state.currentRide.pickup_longitude});
   }
   if(state.currentRide.destination_latitude!==null&&state.currentRide.destination_latitude!==undefined){
-   points.push({type:'destination',label:state.currentRide.destination_text||'Destino',latitude:state.currentRide.destination_latitude,longitude:state.currentRide.destination_longitude});
+   points.push({id:`destination:${state.currentRide.id}`,type:'destination',label:state.currentRide.destination_text||'Destino',latitude:state.currentRide.destination_latitude,longitude:state.currentRide.destination_longitude});
   }
  }else{
   for(const ride of state.requests){
    if(ride.pickup_latitude!==null&&ride.pickup_latitude!==undefined){
-    points.push({type:'pickup',label:`Partida · ${ride.pickup_text}`,latitude:ride.pickup_latitude,longitude:ride.pickup_longitude});
+    points.push({id:`pickup:${ride.id}`,type:'pickup',label:`Partida · ${ride.pickup_text}`,latitude:ride.pickup_latitude,longitude:ride.pickup_longitude});
    }
    if(ride.destination_latitude!==null&&ride.destination_latitude!==undefined){
-    points.push({type:'destination',label:`Destino · ${ride.destination_text}`,latitude:ride.destination_latitude,longitude:ride.destination_longitude});
+    points.push({id:`destination:${ride.id}`,type:'destination',label:`Destino · ${ride.destination_text}`,latitude:ride.destination_latitude,longitude:ride.destination_longitude});
    }
   }
  }
- if(state.driverLocation)points.push({type:'driver',label:'Sua localização',...state.driverLocation});
+ if(state.driverLocation)points.push({id:'current-driver',type:'driver',label:'Sua localização',...state.driverLocation});
  return points;
 }
 function setDriverMapLocation(point){
@@ -201,6 +327,7 @@ function activeRideCard(){
   ${ride.cancelled_by?'<div class="notice">Passageiro cancelou trajeto.</div>':''}
   ${confirmed?`<div class="ride-actions"><button class="btn btn-green" id="start-ride" type="button" ${state.busy?'disabled':''}>Iniciar corrida</button><button class="btn btn-danger" id="cancel-ride" type="button" ${state.busy?'disabled':''}>Cancelar corrida</button></div>`:''}
   ${inProgress?`<button class="btn btn-green btn-block ride-complete" id="complete-ride" type="button" ${state.busy?'disabled':''}>Finalizar corrida</button>`:''}
+  ${rideChatButtonMarkup(ride.id,state.chatUnreadByRide[ride.id])}
  </section>`;
 }
 const driverHero3d=`<svg class="driver-hero-svg" viewBox="0 0 260 200" role="img" aria-label="Mototaxista de capacete pilotando uma moto"><defs><linearGradient id="dhBody" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4ade80"/><stop offset=".6" stop-color="#16a34a"/><stop offset="1" stop-color="#14532d"/></linearGradient><linearGradient id="dhMetal" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e2e8f0"/><stop offset="1" stop-color="#475569"/></linearGradient><linearGradient id="dhJacket" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#475569"/><stop offset="1" stop-color="#1e293b"/></linearGradient><linearGradient id="dhVisor" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7dd3fc"/><stop offset="1" stop-color="#0c4a6e"/></linearGradient><radialGradient id="dhHelmet" cx=".35" cy=".3" r=".85"><stop offset="0" stop-color="#ffffff"/><stop offset=".45" stop-color="#bbf7d0"/><stop offset="1" stop-color="#16a34a"/></radialGradient><radialGradient id="dhTire" cx=".4" cy=".35" r=".8"><stop offset="0" stop-color="#4b5563"/><stop offset="1" stop-color="#0f172a"/></radialGradient><radialGradient id="dhRim" cx=".35" cy=".3" r=".8"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#94a3b8"/></radialGradient><radialGradient id="dhShadow"><stop offset="0" stop-color="#000" stop-opacity=".5"/><stop offset="1" stop-color="#000" stop-opacity="0"/></radialGradient></defs><ellipse cx="132" cy="180" rx="108" ry="10" fill="url(#dhShadow)"/><g stroke="#fff" stroke-opacity=".28" stroke-width="3" stroke-linecap="round"><path d="M6 70H34"/><path d="M0 96H26"/><path d="M10 122H40"/></g><circle cx="60" cy="146" r="32" fill="url(#dhTire)"/><circle cx="60" cy="146" r="19" fill="url(#dhRim)"/><circle cx="60" cy="146" r="5" fill="#475569"/><circle cx="204" cy="146" r="32" fill="url(#dhTire)"/><circle cx="204" cy="146" r="19" fill="url(#dhRim)"/><circle cx="204" cy="146" r="5" fill="#475569"/><path d="M60 146L118 128" stroke="#475569" stroke-width="7" stroke-linecap="round"/><path d="M118 138L84 150" stroke="url(#dhMetal)" stroke-width="8" stroke-linecap="round"/><path d="M186 88L204 146" stroke="url(#dhMetal)" stroke-width="7" stroke-linecap="round"/><rect x="112" y="112" width="54" height="30" rx="8" fill="url(#dhMetal)"/><path d="M62 104C66 94 84 92 108 96L112 114L70 118Z" fill="url(#dhBody)"/><path d="M104 88C120 66 160 64 178 82L170 108L110 112Z" fill="url(#dhBody)"/><path d="M116 82C134 70 160 70 172 84" fill="none" stroke="#fff" stroke-opacity=".5" stroke-width="4" stroke-linecap="round"/><path d="M70 90C80 84 100 84 112 88L110 100L68 100Z" fill="#1f2937"/><circle cx="192" cy="84" r="10" fill="#fef08a"/><circle cx="189" cy="81" r="3.5" fill="#fff" fill-opacity=".85"/><path d="M178 118C194 106 218 108 232 122" fill="none" stroke="#16a34a" stroke-width="7" stroke-linecap="round"/><path d="M92 86L138 102L130 134" fill="none" stroke="#1e293b" stroke-width="15" stroke-linecap="round" stroke-linejoin="round"/><ellipse cx="132" cy="138" rx="14" ry="7" fill="#0f172a"/><path d="M80 92C74 66 92 46 114 46C130 48 134 62 130 76L122 94Z" fill="url(#dhJacket)"/><path d="M86 76L130 66" stroke="#bef264" stroke-width="4.5" stroke-linecap="round"/><path d="M120 56L146 78L172 66" fill="none" stroke="#334155" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/><path d="M170 66L194 60" stroke="#111827" stroke-width="7" stroke-linecap="round"/><circle cx="174" cy="66" r="7" fill="#0f172a"/><circle cx="124" cy="38" r="23" fill="url(#dhHelmet)"/><path d="M128 28C144 28 150 40 148 50L130 50Z" fill="url(#dhVisor)"/><path d="M132 32C138 32 142 35 144 39" fill="none" stroke="#fff" stroke-opacity=".7" stroke-width="2.5" stroke-linecap="round"/><path d="M104 26C110 14 126 12 136 16" fill="none" stroke="#fff" stroke-opacity=".7" stroke-width="3.5" stroke-linecap="round"/><path d="M108 44C110 52 118 58 128 58" fill="none" stroke="#14532d" stroke-opacity=".4" stroke-width="3" stroke-linecap="round"/></svg>`;
@@ -236,17 +363,25 @@ function reviewCard(ride){
  return `<section class="panel" style="margin-top:12px"><div class="driver-top">${profileAvatar(ride.other_avatar_photo_url,ride.other_username||ride.other_full_name||'P')}<div><div class="driver-name">${escapeHtml(ride.other_username?`@${ride.other_username}`:ride.other_full_name||'Passageiro')}</div><div class="muted">Avalie sua experiência nesta corrida</div></div></div><form data-review-form="${escapeHtml(ride.ride_id)}"><div class="field"><label>Nota de 1 a 5 estrelas</label><div role="group" aria-label="Escolha uma nota" style="display:flex;gap:6px">${[1,2,3,4,5].map(rating=>`<button class="btn ${rating<=(draft.rating||0)?'btn-green':'btn-light'}" type="button" data-review-rating="${escapeHtml(ride.ride_id)}" data-rating="${rating}" aria-pressed="${rating===(draft.rating||0)}" aria-label="${rating} estrelas">${rating<=(draft.rating||0)?'★':'☆'}</button>`).join('')}</div></div><div class="field"><label for="driver-review-${escapeHtml(ride.ride_id)}">Comentário (opcional)</label><textarea id="driver-review-${escapeHtml(ride.ride_id)}" name="comment" maxlength="1000" rows="3" placeholder="Compartilhe sua experiência">${escapeHtml(draft.comment||'')}</textarea></div><button class="btn btn-green btn-block" type="submit" ${state.busy||!draft.rating?'disabled':''}>Enviar avaliação</button><p class="field-help">Você pode avaliar depois pelo histórico. Após o envio, a avaliação não poderá ser alterada.</p></form></section>`;
 }
 function history(){
- const completed=state.rideHistory.filter(ride=>ride.status==='completed');
- const today=new Date();
- const dayStart=new Date(today.getFullYear(),today.getMonth(),today.getDate());
- const weekStart=new Date(dayStart);
- weekStart.setDate(dayStart.getDate()-((dayStart.getDay()+6)%7));
- const completedToday=completed.filter(ride=>ride.completed_at&&new Date(ride.completed_at)>=dayStart).length;
- const completedThisWeek=completed.filter(ride=>ride.completed_at&&new Date(ride.completed_at)>=weekStart).length;
- const rides=state.rideHistory.map(ride=>`<article class="panel history-card"><div class="section-title"><h2>${ride.status==='completed'?'Corrida concluída':ride.status==='cancelled'?'Corrida cancelada':'Solicitação expirada'}</h2><span class="muted">${ride.completed_at?new Date(ride.completed_at).toLocaleDateString('pt-BR'):new Date(ride.created_at).toLocaleDateString('pt-BR')}</span></div>${route(ride.pickup_text,ride.destination_text)}<div class="driver-top">${profileAvatar(ride.other_avatar_photo_url,ride.other_username||ride.other_full_name||'P')}<div><div class="driver-name">${escapeHtml(ride.other_username?`@${ride.other_username}`:ride.other_full_name||'Passageiro')}</div><div class="muted">${ride.other_review_count?`★ ${Number(ride.other_average_rating).toFixed(2)} · ${ride.other_review_count} avaliações`:'Sem avaliações'} · ${ride.status==='completed'?'Passageiro da corrida':'Participante da solicitação'}</div></div></div>${reviewCard(ride)}</article>`).join('');
+ const rides=state.rideHistory.map(ride=>`<article class="panel history-card"><div class="section-title"><h2>${ride.status==='completed'?'Corrida concluída':ride.status==='cancelled'?'Corrida cancelada':'Solicitação expirada'}</h2><span class="muted">${ride.completed_at?new Date(ride.completed_at).toLocaleDateString('pt-BR'):new Date(ride.created_at).toLocaleDateString('pt-BR')}</span></div>${route(ride.pickup_text,ride.destination_text)}<div class="driver-top">${profileAvatar(ride.other_avatar_photo_url,ride.other_username||ride.other_full_name||'P')}<div><div class="driver-name">${escapeHtml(ride.other_username?`@${ride.other_username}`:ride.other_full_name||'Passageiro')}</div><div class="muted">${ride.other_review_count?`★ ${Number(ride.other_average_rating).toFixed(2)} · ${ride.other_review_count} avaliações`:'Sem avaliações'} · ${ride.status==='completed'?'Passageiro da corrida':'Participante da solicitação'}</div></div></div>${['completed','cancelled'].includes(ride.status)?rideChatButtonMarkup(ride.ride_id,state.chatUnreadByRide[ride.ride_id]):''}${reviewCard(ride)}</article>`).join('');
  const offers=state.offers.length?`<section class="panel"><h2>Propostas enviadas nesta sessão</h2>${state.offers.map(o=>`<div class="ride-row"><div><strong>${escapeHtml(o.pickup)} → ${escapeHtml(o.destination)}</strong><span class="muted">${o.eta} min estimados · ${o.demo?'Proposta demonstrativa':'Enviada ao Supabase'}</span></div><div style="text-align:right"><div class="price" style="font-size:18px">${money(o.price)}</div><span class="tag ${o.demo?'tag-orange':'tag-green'}">${o.demo?'Fictícia':'Enviada'}</span></div></div>`).join('')}</section>`:'';
- const earnings=`<section class="earnings-summary"><div><span class="availability-kicker">GANHOS</span><h2>Resumo financeiro</h2><p>O histórico atual não retorna o valor das corridas. Para evitar estimativas, os ganhos em reais não são exibidos.</p></div><div class="earnings-periods"><div><span>Hoje</span><strong>—</strong><small>${completedToday} ${completedToday===1?'corrida concluída':'corridas concluídas'}</small></div><div><span>Esta semana</span><strong>—</strong><small>${completedThisWeek} ${completedThisWeek===1?'corrida concluída':'corridas concluídas'}</small></div></div></section>`;
- return `${heading('SEU TRABALHO','Ganhos e corridas','Acompanhe sua atividade e consulte o histórico persistente.')} ${earnings}<div class="notice">${state.reputation.review_count?`Sua reputação: ★ ${Number(state.reputation.average_rating).toFixed(2)} · ${state.reputation.review_count} avaliações recebidas.`:'Sem avaliações recebidas ainda.'}</div><div class="section-title"><h2>Histórico de corridas</h2></div>${rides||'<div class="panel empty-state"><div class="empty-icon">◷</div><strong>Nenhuma corrida no histórico</strong><p>Corridas concluídas aparecerão aqui e continuarão disponíveis após você entrar novamente.</p></div>'}${offers}`;
+ const summary=state.earningsSummary;
+ const periodFrom=state.earningsFrom||defaultEarningsFrom();
+ const periodTo=state.earningsTo||defaultEarningsTo();
+ const earningsSummary=!state.isDriver
+  ?'<div class="notice">O painel de ganhos fica disponível após a aprovação do cadastro de mototaxista.</div>'
+  :state.earningsLoading&&!summary
+  ?'<div class="notice" role="status">Carregando seus ganhos reais…</div>'
+  :state.earningsError
+   ?`<div class="notice form-error" role="alert">${escapeHtml(state.earningsError)}<button type="button" class="btn btn-light" id="retry-earnings">Tentar novamente</button></div>`
+   :`<section class="earnings-summary panel"><div><span class="availability-kicker">GANHOS REAIS</span><h2>Resumo financeiro</h2><p>Somente corridas concluídas; o valor vem da proposta aceita e registrada no Supabase.</p><div class="earnings-extra"><span>Este mês <strong>${money(summary?.month_total||0)}</strong></span><span>Total acumulado <strong>${money(summary?.total_earnings||0)}</strong></span><span>${Number(summary?.completed_rides||0)} corridas concluídas</span><span>Média por corrida <strong>${money(summary?.average_per_ride||0)}</strong></span></div></div><div class="earnings-periods"><div><span>Hoje</span><strong>${money(summary?.today_total||0)}</strong></div><div><span>Últimos 7 dias</span><strong>${money(summary?.last_7_days_total||0)}</strong></div></div></section>`;
+ const earningsRows=state.earningsRows.map(ride=>`<article class="panel earnings-row"><div class="section-title"><h3>Corrida concluída</h3><span class="muted">${new Date(ride.completed_at).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'})}</span></div>${route(ride.pickup_text,ride.destination_text)}<div class="ride-fare"><div><div class="meta-label">VALOR RECEBIDO</div><div class="price">${money(ride.final_fare)}</div></div></div></article>`).join('');
+ const earningHistory=!state.isDriver
+  ?'<div class="panel empty-state">Aprove seu cadastro para consultar o histórico de ganhos.</div>'
+  :state.earningsLoading&&!state.earningsRows.length
+  ?'<div class="panel empty-state" role="status">Carregando histórico de ganhos…</div>'
+  :state.earningsError?'':earningsRows||'<div class="panel empty-state"><div class="empty-icon">◷</div><strong>Nenhum ganho neste período</strong><p>Somente corridas concluídas aparecem neste histórico.</p></div>';
+ return `${heading('SEU TRABALHO','Ganhos e corridas','Consulte valores registrados nas corridas concluídas e o histórico financeiro.')} ${earningsSummary}<form class="panel earnings-filter" id="earnings-filter"><h2>Histórico de ganhos</h2><div class="grid-two"><div class="field"><label for="earnings-from">De</label><input id="earnings-from" name="from" type="date" value="${escapeHtml(periodFrom)}" required></div><div class="field"><label for="earnings-to">Até</label><input id="earnings-to" name="to" type="date" value="${escapeHtml(periodTo)}" required></div></div><button class="btn btn-green" type="submit" ${state.earningsLoading?'disabled':''}>Consultar período</button></form><div class="earnings-history">${earningHistory}${state.earningsHasMore?'<button class="btn btn-light btn-block" id="earnings-more" type="button" '+(state.earningsLoading?'disabled':'')+'>Carregar mais corridas</button>':''}</div><div class="notice">${state.reputation.review_count?`Sua reputação: ★ ${Number(state.reputation.average_rating).toFixed(2)} · ${state.reputation.review_count} avaliações recebidas.`:'Sem avaliações recebidas ainda.'}</div><div class="section-title"><h2>Histórico de corridas</h2></div>${rides||'<div class="panel empty-state"><div class="empty-icon">◷</div><strong>Nenhuma corrida no histórico</strong><p>Corridas concluídas aparecerão aqui e continuarão disponíveis após você entrar novamente.</p></div>'}${offers}`;
 }
 const carIcon3d=`<svg class="vehicle-svg" viewBox="0 0 160 100" aria-hidden="true" focusable="false"><defs><linearGradient id="vcBody" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4ade80"/><stop offset=".55" stop-color="#16a34a"/><stop offset="1" stop-color="#14532d"/></linearGradient><linearGradient id="vcGlass" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e0f2fe"/><stop offset="1" stop-color="#38bdf8"/></linearGradient><radialGradient id="vcTire" cx=".4" cy=".35" r=".8"><stop offset="0" stop-color="#4b5563"/><stop offset="1" stop-color="#111827"/></radialGradient><radialGradient id="vcRim" cx=".35" cy=".3" r=".8"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#94a3b8"/></radialGradient><radialGradient id="vcShadow"><stop offset="0" stop-color="#0f172a" stop-opacity=".38"/><stop offset="1" stop-color="#0f172a" stop-opacity="0"/></radialGradient></defs><ellipse cx="80" cy="90" rx="66" ry="8" fill="url(#vcShadow)"/><path d="M14 66C14 54 20 50 34 48L52 30C56 26 60 25 66 25H100C106 25 110 27 114 31L128 48C142 50 148 54 148 66V72C148 75 146 77 143 77H19C16 77 14 75 14 72Z" fill="url(#vcBody)"/><path d="M55 33L64 29.5H80V46H44Z" fill="url(#vcGlass)"/><path d="M85 29.5H100C103 29.5 105 30.5 107 33L118 46H85Z" fill="url(#vcGlass)"/><path d="M80 46V70" stroke="#14532d" stroke-opacity=".4" stroke-width="1.5"/><rect x="19" y="70" width="124" height="7" rx="3" fill="#14532d" fill-opacity=".55"/><path d="M24 58C44 52 104 52 138 58" fill="none" stroke="#fff" stroke-opacity=".38" stroke-width="3" stroke-linecap="round"/><ellipse cx="141" cy="60" rx="5" ry="3.5" fill="#fef08a"/><rect x="14" y="58" width="5" height="7" rx="1.5" fill="#f87171"/><circle cx="42" cy="74" r="17" fill="#0b1220" fill-opacity=".55"/><circle cx="120" cy="74" r="17" fill="#0b1220" fill-opacity=".55"/><circle cx="42" cy="74" r="15" fill="url(#vcTire)"/><circle cx="42" cy="74" r="8" fill="url(#vcRim)"/><circle cx="42" cy="74" r="3" fill="#475569"/><circle cx="120" cy="74" r="15" fill="url(#vcTire)"/><circle cx="120" cy="74" r="8" fill="url(#vcRim)"/><circle cx="120" cy="74" r="3" fill="#475569"/></svg>`;
 const motoIcon3d=`<svg class="vehicle-svg" viewBox="0 0 160 100" aria-hidden="true" focusable="false"><defs><linearGradient id="vmBody" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4ade80"/><stop offset=".6" stop-color="#16a34a"/><stop offset="1" stop-color="#14532d"/></linearGradient><linearGradient id="vmMetal" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#cbd5e1"/><stop offset="1" stop-color="#475569"/></linearGradient><radialGradient id="vmTire" cx=".4" cy=".35" r=".8"><stop offset="0" stop-color="#4b5563"/><stop offset="1" stop-color="#111827"/></radialGradient><radialGradient id="vmRim" cx=".35" cy=".3" r=".8"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#94a3b8"/></radialGradient><radialGradient id="vmShadow"><stop offset="0" stop-color="#0f172a" stop-opacity=".38"/><stop offset="1" stop-color="#0f172a" stop-opacity="0"/></radialGradient></defs><ellipse cx="80" cy="90" rx="66" ry="8" fill="url(#vmShadow)"/><circle cx="36" cy="70" r="20" fill="url(#vmTire)"/><circle cx="36" cy="70" r="12" fill="url(#vmRim)"/><circle cx="36" cy="70" r="3.5" fill="#475569"/><circle cx="126" cy="70" r="20" fill="url(#vmTire)"/><circle cx="126" cy="70" r="12" fill="url(#vmRim)"/><circle cx="126" cy="70" r="3.5" fill="#475569"/><path d="M36 70L70 60" stroke="#475569" stroke-width="4.5" stroke-linecap="round"/><path d="M70 62L50 69" stroke="url(#vmMetal)" stroke-width="5" stroke-linecap="round"/><path d="M112 30L126 70" stroke="url(#vmMetal)" stroke-width="4.5" stroke-linecap="round"/><rect x="66" y="48" width="34" height="18" rx="5" fill="url(#vmMetal)"/><path d="M42 46C42 41 50 40 60 41L66 43L64 50H44Z" fill="#1f2937"/><path d="M60 40C68 28 92 28 102 37L98 49L64 51Z" fill="url(#vmBody)"/><path d="M66 36C74 31 90 31 97 37" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="2.5" stroke-linecap="round"/><path d="M103 28L117 25" stroke="#111827" stroke-width="4.5" stroke-linecap="round"/><circle cx="119" cy="35" r="6.5" fill="#fef08a"/><circle cx="117.5" cy="33.5" r="2" fill="#fff" fill-opacity=".8"/><path d="M110 54C120 47 134 49 141 56" fill="none" stroke="#16a34a" stroke-width="4.5" stroke-linecap="round"/></svg>`;
@@ -314,6 +449,7 @@ async function loadActiveDriverRide(){
  const customer=await getDriverRideCustomer(ride.id);
  if(userId!==state.authUserId||generation!==state.rideSyncGeneration)return;
  state.currentRide={...ride,offer,customer};
+ ensureDriverChatRealtime(ride.id);
  await syncDriverLocationTracking();
 }
 async function loadOpenRideCustomers(rides){
@@ -331,6 +467,83 @@ async function refreshDriverHistory(){
  state.rideHistory=rideHistory;
  state.reputation=reputation;
  if(state.view==='history')render();
+ await loadDriverEarnings();
+}
+function localDateInput(date){
+ const year=date.getFullYear();
+ const month=String(date.getMonth()+1).padStart(2,'0');
+ const day=String(date.getDate()).padStart(2,'0');
+ return `${year}-${month}-${day}`;
+}
+function defaultEarningsFrom(){
+ const date=new Date();
+ date.setDate(date.getDate()-29);
+ return localDateInput(date);
+}
+function defaultEarningsTo(){
+ return localDateInput(new Date());
+}
+function dateInputStart(value){
+ const [year,month,day]=value.split('-').map(Number);
+ return new Date(year,month-1,day).toISOString();
+}
+function dateInputEndExclusive(value){
+ const [year,month,day]=value.split('-').map(Number);
+ return new Date(year,month-1,day+1).toISOString();
+}
+async function loadDriverEarnings({append=false}={}){
+ if(!state.user||!state.isDriver)return;
+ const userId=state.user.id;
+ const requestId=++state.earningsRequestId;
+ const from=state.earningsFrom||defaultEarningsFrom();
+ const to=state.earningsTo||defaultEarningsTo();
+ if(to<from){
+  state.earningsError='A data final do período precisa ser igual ou posterior à data inicial.';
+  state.earningsLoading=false;
+  state.earningsHasMore=false;
+  if(state.view==='history')render();
+  return;
+ }
+ if(!append){
+  state.earningsFrom=from;
+  state.earningsTo=to;
+  state.earningsOffset=0;
+  state.earningsRows=[];
+ }
+ const offset=append?state.earningsOffset:0;
+ state.earningsLoading=true;
+ state.earningsError=null;
+ if(state.view==='history')render();
+ try{
+  const now=new Date();
+  const todayStart=new Date(now.getFullYear(),now.getMonth(),now.getDate());
+  const last7DaysStart=new Date(now.getFullYear(),now.getMonth(),now.getDate()-6);
+  const monthStart=new Date(now.getFullYear(),now.getMonth(),1);
+  const [summary,rows]=await Promise.all([
+   append?Promise.resolve(state.earningsSummary):getMyDriverEarningsSummary({
+    todayStart:todayStart.toISOString(),
+    last7DaysStart:last7DaysStart.toISOString(),
+    monthStart:monthStart.toISOString()
+   }),
+   getMyDriverEarnings({
+    from:dateInputStart(from),
+    to:dateInputEndExclusive(to),
+    offset
+   })
+  ]);
+  if(state.user?.id!==userId||state.earningsRequestId!==requestId)return;
+  if(!append)state.earningsSummary=summary;
+  state.earningsRows=append?[...state.earningsRows,...rows]:rows;
+  state.earningsOffset=offset+rows.length;
+  state.earningsHasMore=rows.length===100;
+ }catch(error){
+  if(state.user?.id===userId&&state.earningsRequestId===requestId)state.earningsError=error.message||'Não foi possível carregar os ganhos reais.';
+ }finally{
+  if(state.user?.id===userId&&state.earningsRequestId===requestId){
+   state.earningsLoading=false;
+   if(state.view==='history')render();
+  }
+ }
 }
 async function submitReview(form){
  const rideId=form.dataset.reviewForm;
@@ -357,6 +570,8 @@ async function performRideAction(action){
  try{
   const updated=action==='start'?await startRide(ride.id):action==='complete'?await completeRide(ride.id):await cancelRide(ride.id,'Cancelada pelo mototaxista');
   if(updated.status==='cancelled'||updated.status==='completed'){
+   if(state.chatRideId===ride.id)state.chatRideStatus=updated.status;
+   clearPushNotificationForRide(ride.id).catch(error=>showToast(error.message||'A corrida foi encerrada, mas não foi possível limpar a notificação do aparelho.','error'));
    state.rideSyncGeneration++;
    state.currentRide=null;
    syncDriverLocationTracking().catch(error=>showToast(error.message||'Não foi possível atualizar o compartilhamento de localização.','error'));
@@ -368,6 +583,7 @@ async function performRideAction(action){
    }else showToast('Corrida cancelada. O passageiro foi notificado.','success');
   }else{
    state.currentRide={...ride,...updated};
+   if(state.chatRideId===ride.id)state.chatRideStatus=updated.status;
    showToast('Viagem iniciada.','success');
   }
  }catch(error){showToast(error.message||'Não foi possível atualizar a corrida.','error')}
@@ -380,6 +596,9 @@ function bind(){
  const availability=app.querySelector('#availability');if(availability)availability.addEventListener('change',()=>updateAvailability(availability.checked));
  const availableNow=app.querySelector('#available-now');if(availableNow)availableNow.addEventListener('click',()=>updateAvailability(true));
  const refreshRides=app.querySelector('#refresh-rides');if(refreshRides)refreshRides.addEventListener('click',async()=>{refreshRides.disabled=true;try{const refreshed=await refreshOpenRides();showToast(refreshed?'Solicitações atualizadas.':state.available?'A lista não foi atualizada; confira sua conexão e tente novamente.':'Fique online para receber solicitações reais.','info')}catch(error){showToast(error.message||'Não foi possível atualizar as solicitações.','error')}finally{if(refreshRides.isConnected)refreshRides.disabled=false}});
+ const earningsFilter=app.querySelector('#earnings-filter');if(earningsFilter)earningsFilter.addEventListener('submit',event=>{event.preventDefault();const values=new FormData(earningsFilter);state.earningsFrom=String(values.get('from')||'');state.earningsTo=String(values.get('to')||'');loadDriverEarnings().catch(error=>showToast(error.message||'Não foi possível atualizar os ganhos.','error'))});
+ const retryEarnings=app.querySelector('#retry-earnings');if(retryEarnings)retryEarnings.addEventListener('click',()=>loadDriverEarnings());
+ const moreEarnings=app.querySelector('#earnings-more');if(moreEarnings)moreEarnings.addEventListener('click',()=>loadDriverEarnings({append:true}));
  const profileForm=app.querySelector('#profile-form');if(profileForm)profileForm.addEventListener('submit',event=>{event.preventDefault();saveDriverProfile(profileForm)});
  const startButton=app.querySelector('#start-ride');if(startButton)startButton.addEventListener('click',()=>performRideAction('start'));
  const completeButton=app.querySelector('#complete-ride');if(completeButton)completeButton.addEventListener('click',()=>performRideAction('complete'));
@@ -552,7 +771,7 @@ function startOpenRideRefresh(){
   if(state.currentRide)loadActiveDriverRide().then(render).catch(error=>showToast(error.message||'Não foi possível atualizar o perfil do passageiro.','error'));
  },15000);
 }
-async function stopDriverRealtime(){const channels=[state.rideChannel,state.offerChannel,state.reviewChannel].filter(Boolean);state.rideChannel=null;state.offerChannel=null;state.reviewChannel=null;await Promise.all(channels.map(removeRealtimeChannel))}
+async function stopDriverRealtime(){const channels=[state.rideChannel,state.offerChannel,state.reviewChannel,state.chatChannel].filter(Boolean);state.rideChannel=null;state.offerChannel=null;state.reviewChannel=null;state.chatChannel=null;state.chatRealtimeRideId=null;await Promise.all(channels.map(removeRealtimeChannel))}
 async function startDriverRealtime(){
  if(!supabase||!state.user||!state.isDriver)return;
  const userId=state.user.id;
@@ -562,6 +781,9 @@ async function startDriverRealtime(){
   channelName:`open-rides-${state.user.id}`,table:'vaimoto_rides',event:'*',
   onChange:payload=>{
    const ride=payload.new;if(!ride?.id)return;
+   if(payload.eventType==='INSERT'&&ride.status==='searching'){
+    playRideAlertOnce(`new-ride:${payload.new.id}`,error=>showToast(error.message||'Não foi possível reproduzir o alerta da solicitação.','error'));
+   }
    if(isOpenRide(ride)){
     driverHasOffered(ride.id,userId).then(hasOffered=>{
      if(state.user?.id!==userId||!state.isDriver)return;
@@ -579,11 +801,14 @@ async function startDriverRealtime(){
    else state.requests=state.requests.filter(item=>item.id!==ride.id);
    if(state.currentRide?.id===ride.id){
     if(ride.status==='cancelled'){
+     if(state.chatRideId===ride.id)state.chatRideStatus='cancelled';
      state.rideSyncGeneration++;
      state.currentRide=null;
+     clearPushNotificationForRide(ride.id).catch(error=>showToast(error.message||'Não foi possível limpar a notificação da corrida cancelada.','error'));
        syncDriverLocationTracking().catch(error=>showToast(error.message||'Não foi possível interromper o compartilhamento de localização.','error'));
      showToast('Passageiro cancelou trajeto.','info');
     }else if(ride.status==='completed'){
+     if(state.chatRideId===ride.id)state.chatRideStatus='completed';
      state.rideSyncGeneration++;
      state.currentRide=null;
      syncDriverLocationTracking().catch(error=>showToast(error.message||'Não foi possível interromper o compartilhamento de localização.','error'));
@@ -630,7 +855,7 @@ async function applyDriverSession(user){
   if(state.authUserId)pendingPushAction=null;
   await stopDriverRealtime();
   if(openRideRefreshTimer){window.clearInterval(openRideRefreshTimer);openRideRefreshTimer=null}
-  state.requests=[];state.rideCustomers={};state.available=false;state.activeRide=null;state.currentRide=null;state.driverLocation=null;state.profile=null;state.rideHistory=[];state.reputation={average_rating:null,review_count:0};state.reviewDrafts={};state.editingProfile=false;state.rideSyncGeneration++;
+  state.requests=[];state.rideCustomers={};state.available=false;state.activeRide=null;state.currentRide=null;state.driverLocation=null;state.profile=null;state.rideHistory=[];state.reputation={average_rating:null,review_count:0};state.reviewDrafts={};state.editingProfile=false;state.chatOpen=false;state.chatRideId=null;state.chatRideStatus=null;state.chatMessages=[];state.chatUnreadByRide={};state.chatUserId=null;state.chatLoading=false;state.chatSending=false;state.chatError=null;state.earningsSummary=null;state.earningsRows=[];state.earningsLoading=false;state.earningsError=null;state.earningsFrom='';state.earningsTo='';state.earningsOffset=0;state.earningsHasMore=false;state.earningsRequestId++;state.rideSyncGeneration++;
   state.authUserId=user?.id||null;state.realtimeStatus='desconectado';hydratedDriverUserId=null;
  }
  state.user=user||null;state.isDriver=false;state.driverApprovalStatus=null;
@@ -681,13 +906,17 @@ async function tryLogoutCleanup(operation){
  return result;
 }
 async function init(){
+ prepareRideAlertUnlock();
  try{
   await initializePushNotifications({
    appRole:'driver',
    getUserId:()=>state.user?.id||null,
    onNotification:notification=>{
     const data=notification.data||{};
-    if(data.kind==='new_ride')refreshOpenRides().catch(error=>showToast(error.message||'Não foi possível atualizar as novas solicitações.','error'));
+    if(data.kind==='new_ride'){
+     playRideAlertOnce(data.notification_id||data.ride_id,error=>showToast(error.message||'Não foi possível reproduzir o alerta da solicitação.','error'));
+     refreshOpenRides().catch(error=>showToast(error.message||'Não foi possível atualizar as novas solicitações.','error'));
+    }
     if(data.kind==='ride_accepted')loadActiveDriverRide().then(render).catch(error=>showToast(error.message||'Não foi possível abrir a corrida confirmada.','error'));
    },
    onAction:notification=>{

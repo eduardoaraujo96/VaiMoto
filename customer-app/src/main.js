@@ -10,9 +10,12 @@ import { clearPushNotificationForRide, enablePushNotifications, initializePushNo
 import { coordinateLabel, normalizeCoordinates } from '../../shared/location-utils.js';
 import { searchLocations } from '../../shared/geocoding.js';
 import { mountRideMap, rideMapCardMarkup } from '../../shared/ride-map.js';
+import { bindRideChatControls, getRideChat, markRideChatRead, rideChatButtonMarkup, rideChatDialogMarkup, sendRideChatMessage, subscribeToRideChat, getRideChatUnreadCount } from '../../shared/ride-chat.js';
+import customerOfferAudioUrl from '../../notificacaoCliente/notificationCliente.mp3?url';
+import { playOfferAlertOnce } from '../../shared/proposal-alert.js';
 
 const app = document.querySelector('#app');
-const state = { view: 'home', pickup: '', destination: '', pickupCoordinates: null, destinationCoordinates: null, pickupLocationSource: 'text_only', destinationLocationSource: 'text_only', driverLocation: null, mapSelectionMode: 'pickup', selected: null, rideId: null, rideStatus: 'searching', selectedOfferId: null, rideOffers: [], driverOfferProfiles: {}, driverDetails: null, arrivalStartedAt: null, arrivalDeadlineAt: null, cancelledBy: null, cancelledAt: null, cancellationReason: null, profile: null, offerChannel: null, rideChannel: null, driverLocationChannel: null, driverLocationRideId: null, reviewChannel: null, realtimeRideId: null, realtimeStatus: 'idle', user: null, authUserId: null, authMode: 'login', busy: false, rideHistory: [], reputation: { average_rating: null, review_count: 0 }, reviewDrafts: {} };
+const state = { view: 'home', pickup: '', destination: '', pickupCoordinates: null, destinationCoordinates: null, pickupLocationSource: 'text_only', destinationLocationSource: 'text_only', driverLocation: null, mapSelectionMode: 'pickup', selected: null, rideId: null, rideStatus: 'searching', selectedOfferId: null, rideOffers: [], driverOfferProfiles: {}, driverDetails: null, arrivalStartedAt: null, arrivalDeadlineAt: null, cancelledBy: null, cancelledAt: null, cancellationReason: null, profile: null, offerChannel: null, rideChannel: null, driverLocationChannel: null, driverLocationRideId: null, reviewChannel: null, chatChannel: null, chatRealtimeRideId: null, chatRideId: null, chatRideStatus: null, chatMessages: [], chatUnreadByRide: {}, chatUserId: null, chatLoading: false, chatSending: false, chatError: null, chatOpen: false, realtimeRideId: null, realtimeStatus: 'idle', user: null, authUserId: null, authMode: 'login', busy: false, rideHistory: [], reputation: { average_rating: null, review_count: 0 }, reviewDrafts: {} };
 let pendingPushAction = null;
 let rideMapController = null;
 const locationSearches = {
@@ -30,7 +33,7 @@ function cancelLocationSearches(){
 }
 const nav = [{ id:'home', icon:'⌂', label:'Início' },{ id:'offers', icon:'⇄', label:'Propostas' },{ id:'tracking', icon:'◉', label:'Corrida' },{ id:'history', icon:'◷', label:'Histórico' },{ id:'account', icon:'♙', label:'Minha conta' }];
 const navHtml = cls => `<nav class="${cls}">${nav.map(n=>`<button class="nav-item ${state.view===n.id?'active':''}" data-view="${n.id}"><span class="nav-icon">${n.icon}</span><span>${n.label}</span></button>`).join('')}</nav>`;
-const header = () => `<header class="topbar"><a class="brand" href="#" data-view="home"><span class="brand-mark">V</span><span class="brand-name">Vai<span>Moto</span></span></a><div class="top-actions"><span class="status-pill ${isSupabaseConfigured?'':'demo-pill'}">${isSupabaseConfigured?'Supabase configurado':'Modo demonstração'}</span></div></header>`;
+const header = () => `<header class="topbar"><a class="brand" href="#" data-view="home" aria-label="VaiMoto, início"><span class="brand-mark">V</span><span class="brand-name">Vai<span>Moto</span></span></a><div class="top-actions"><span class="status-pill ${isSupabaseConfigured?'':'demo-pill'}">${isSupabaseConfigured?'BETA':'Modo demonstração'}</span></div></header>`;
 const heading = (eyebrow,title,desc) => `<div class="page-heading"><div><div class="eyebrow">${eyebrow}</div><h1>${title}</h1><p>${desc}</p></div></div>`;
 const route = (pickup,destination) => `<div class="route-line"><div class="route-dots"><span class="dot"></span><span class="route-stem"></span><span class="dot end"></span></div><div style="display:grid;gap:20px;min-width:0"><div><div class="route-caption">LOCAL DE PARTIDA</div><div class="route-place">${escapeHtml(pickup)}</div></div><div><div class="route-caption">DESTINO</div><div class="route-place">${escapeHtml(destination)}</div></div></div></div>`;
 function render(){
@@ -42,18 +45,136 @@ function render(){
     startRideRealtime(state.rideId).catch(error=>{showToast(error.message||'Não foi possível iniciar as atualizações em tempo real.','error')}).finally(()=>{state.realtimeStarting=false;render()});
   }
   const content = state.view==='home' ? homeView() : state.view==='offers' ? offersView() : state.view==='confirm' ? confirmView() : state.view==='tracking' ? trackingView() : state.view==='history' ? historyView() : state.view==='account' ? accountView() : homeView();
-  app.innerHTML = `${header()}<div class="layout"><aside class="sidebar"><div class="nav-label">MENU PRINCIPAL</div><div class="nav-list">${nav.map(n=>`<button class="nav-item ${state.view===n.id?'active':''}" data-view="${n.id}"><span class="nav-icon">${n.icon}</span>${n.label}</button>`).join('')}</div><div class="side-note"><strong>Uma corrida do seu jeito</strong>Compare propostas e escolha o mototaxista que combina com você.</div></aside><main class="main">${content}<div class="footer-note">VaiMoto · Primeira versão · ${isSupabaseConfigured?'configuração Supabase detectada':'dados de demonstração'}</div></main></div>${navHtml('bottom-nav')}`;
+  app.innerHTML = `${header()}<div class="layout"><aside class="sidebar"><div class="nav-label">MENU PRINCIPAL</div><div class="nav-list">${nav.map(n=>`<button class="nav-item ${state.view===n.id?'active':''}" data-view="${n.id}"><span class="nav-icon">${n.icon}</span>${n.label}</button>`).join('')}</div><div class="side-note"><strong>Uma corrida do seu jeito</strong>Compare propostas e escolha o mototaxista que combina com você.</div></aside><main class="main">${content}<div class="footer-note">VaiMoto · Primeira versão · ${isSupabaseConfigured?'configuração Supabase detectada':'dados de demonstração'}</div></main></div>${navHtml('bottom-nav')}${rideChatDialogMarkup({rideId:state.chatRideId,messages:state.chatMessages,userId:state.chatUserId,open:state.chatOpen,loading:state.chatLoading,sending:state.chatSending,error:state.chatError,canSend:['confirmed','in_progress'].includes(state.chatRideStatus),otherSenderLabel:'Mototaxista'})}`;
   bind();
   bindRideActions();
+  bindRideChatControls(app, {
+    onOpen: rideId => openRideChat(rideId),
+    onClose: closeRideChat,
+    onRetry: rideId => loadRideChat(rideId),
+    onSend: (rideId, body) => sendChatMessage(rideId, body)
+  });
   mountCustomerRideMap();
   bindProfileAvatarFallbacks(app);
   updateArrivalCountdowns(app);
 }
+function appendCustomerChatMessage(message){
+ if(!message?.id||state.chatRideId!==message.ride_id)return;
+ if(!state.chatMessages.some(item=>item.id===message.id)){
+  state.chatMessages=[...state.chatMessages,message];
+  state.chatMessages.sort((a,b)=>new Date(a.created_at)-new Date(b.created_at)||a.id.localeCompare(b.id));
+ }
+}
+function ensureCustomerChatRealtime(rideId){
+ if(!supabase||!state.user||!rideId)return;
+ if(state.chatRealtimeRideId===rideId&&state.chatChannel)return;
+ state.chatUserId=state.user.id;
+ const previous=state.chatChannel;
+ state.chatChannel=null;
+ state.chatRealtimeRideId=rideId;
+ if(previous)removeRealtimeChannel(previous).catch(error=>showToast(error.message||'Não foi possível encerrar o canal de mensagens anterior.','error'));
+ state.chatChannel=subscribeToRideChat(rideId,payload=>{
+  const message=payload.new;
+  if(state.chatRealtimeRideId!==rideId||!message?.id)return;
+  appendCustomerChatMessage(message);
+  if(message.sender_id!==state.chatUserId){
+   if(state.chatOpen&&state.chatRideId===rideId){
+    markRideChatRead(rideId).then(()=>{
+     state.chatUnreadByRide={...state.chatUnreadByRide,[rideId]:0};
+     render();
+    }).catch(error=>{state.chatError=error.message||'Não foi possível atualizar as mensagens lidas.';render()});
+   }else{
+    getRideChatUnreadCount(rideId).then(count=>{
+     state.chatUnreadByRide={...state.chatUnreadByRide,[rideId]:count};
+     render();
+    }).catch(error=>showToast(error.message||'Não foi possível atualizar o indicador de mensagens não lidas.','error'));
+   }
+  }else if(state.chatOpen&&state.chatRideId===rideId)render();
+ },status=>{
+  if(state.chatRealtimeRideId!==rideId)return;
+  if(status==='CHANNEL_ERROR'||status==='TIMED_OUT'){
+   state.chatError='A conexão em tempo real das mensagens falhou. Verifique a conexão e tente novamente.';
+   if(state.chatOpen&&state.chatRideId===rideId)render();
+   else showToast(state.chatError,'error');
+  }
+ });
+ getRideChatUnreadCount(rideId).then(count=>{
+  if(state.chatRealtimeRideId===rideId){
+   state.chatUnreadByRide={...state.chatUnreadByRide,[rideId]:count};
+   render();
+  }
+ }).catch(error=>{
+  if(state.chatRealtimeRideId===rideId&&state.chatOpen&&state.chatRideId===rideId){
+   state.chatError=error.message||'Não foi possível carregar mensagens não lidas.';
+   render();
+  }else if(state.chatRealtimeRideId===rideId)showToast(error.message||'Não foi possível carregar mensagens não lidas.','error');
+ });
+}
+async function loadRideChat(rideId){
+ const targetRideId=String(rideId||'');
+ if(!targetRideId)return;
+ state.chatRideId=targetRideId;
+ state.chatLoading=true;
+ state.chatError=null;
+ render();
+ try{
+  ensureCustomerChatRealtime(targetRideId);
+  const conversation=await getRideChat(targetRideId);
+  if(state.chatRideId!==targetRideId)return;
+  state.chatUserId=conversation.userId;
+  state.chatMessages=[...conversation.messages];
+  state.chatUnreadByRide={...state.chatUnreadByRide,[targetRideId]:conversation.unreadCount};
+  await markRideChatRead(targetRideId);
+  state.chatUnreadByRide={...state.chatUnreadByRide,[targetRideId]:0};
+ }catch(error){
+  if(state.chatRideId===targetRideId)state.chatError=error.message||'Não foi possível carregar as mensagens desta corrida.';
+ }finally{
+  if(state.chatRideId===targetRideId){state.chatLoading=false;render()}
+ }
+}
+function openRideChat(rideId){
+ const targetRideId=String(rideId||'');
+ const historyRide=state.rideHistory.find(ride=>ride.ride_id===targetRideId);
+ state.chatRideStatus=targetRideId===state.rideId?state.rideStatus:historyRide?.status;
+ state.chatOpen=true;
+ state.chatMessages=[];
+ state.chatUserId=state.user?.id||null;
+ loadRideChat(targetRideId);
+}
+function closeRideChat(){
+ state.chatOpen=false;
+ state.chatError=null;
+ const activeChatRideId=state.rideId&&['confirmed','in_progress'].includes(state.rideStatus)?state.rideId:null;
+ if(!activeChatRideId||activeChatRideId!==state.chatRealtimeRideId){
+  const channel=state.chatChannel;
+  state.chatChannel=null;
+  state.chatRealtimeRideId=null;
+  if(channel)removeRealtimeChannel(channel).catch(error=>showToast(error.message||'Não foi possível encerrar o canal de mensagens.','error'));
+ }
+ render();
+}
+async function sendChatMessage(rideId,body){
+ if(!['confirmed','in_progress'].includes(state.chatRideStatus)||state.chatSending)return;
+ state.chatSending=true;
+ state.chatError=null;
+ render();
+ try{
+  const message=await sendRideChatMessage(rideId,body);
+  appendCustomerChatMessage(message);
+  await markRideChatRead(rideId);
+  state.chatUnreadByRide={...state.chatUnreadByRide,[rideId]:0};
+ }catch(error){
+  state.chatError=error.message||'Não foi possível enviar a mensagem.';
+ }finally{
+  state.chatSending=false;
+  render();
+ }
+}
 function customerMapPoints(){
  const points=[];
- if(state.pickupCoordinates)points.push({type:'pickup',label:state.pickup||'Partida',...state.pickupCoordinates});
- if(state.destinationCoordinates)points.push({type:'destination',label:state.destination||'Destino',...state.destinationCoordinates});
- if(state.driverLocation)points.push({type:'driver',label:'Mototaxista',...state.driverLocation});
+ if(state.pickupCoordinates)points.push({id:'ride-pickup',type:'pickup',label:state.pickup||'Partida',...state.pickupCoordinates});
+ if(state.destinationCoordinates)points.push({id:'ride-destination',type:'destination',label:state.destination||'Destino',...state.destinationCoordinates});
+ if(state.driverLocation)points.push({id:'assigned-driver',type:'driver',label:'Mototaxista',...state.driverLocation});
  return points;
 }
 function setCustomerMapPoint(type,point,source='manual',selectedLabel){
@@ -177,7 +298,7 @@ function bindLocationSearch(type){
 }
 function mountCustomerRideMap(){
  const onHome=state.view==='home';
- const onActiveRide=['offers','tracking'].includes(state.view)&&state.rideId&&!state.demoRide;
+ const onActiveRide=['offers','tracking'].includes(state.view)&&state.rideId&&!state.demoRide&&['searching','offered','confirmed','in_progress'].includes(state.rideStatus);
  if(!onHome&&!onActiveRide)return;
  const markup=rideMapCardMarkup({
   id:'customer-ride-map',
@@ -246,7 +367,7 @@ function trackingView(){
  const pendingDriverCard=!driver&&['confirmed','in_progress'].includes(state.rideStatus)?`<div class="driver-top" style="margin:16px 0">${profileAvatar(null,'M')}<div><div class="driver-name">Mototaxista</div><div class="muted">Corrida confirmada</div></div></div>`:'';
  const cancelMessage=state.rideStatus==='cancelled'?(state.cancelledBy&&state.driverDetails?.driver_id===state.cancelledBy?'Motorista cancelou trajeto.':'Corrida cancelada por você.'):'';
  const inProgressNotice=state.rideStatus==='in_progress'?'<div class="notice">A viagem já começou. O cancelamento comum está desabilitado; entre em contato com o suporte para relatar uma emergência.</div>':'';
- return `${heading('ACOMPANHAMENTO','Sua corrida','Status sincronizado com o mototaxista pelo Supabase.')}<div class="panel"><span class="tag ${state.rideStatus==='cancelled'?'tag-orange':'tag-green'}">${labels[state.rideStatus]||'Status da corrida'}</span>${route(state.pickup,state.destination)}${timer}${driverCard||pendingDriverCard}${state.rideStatus==='cancelled'?`<div class="notice">${escapeHtml(cancelMessage)}</div>`:''}${inProgressNotice}${state.rideStatus==='confirmed'&&selectedOffer&&!driver?`<div class="grid-two" style="margin:16px 0"><div class="stat-card"><div class="stat-label">Valor acordado</div><div class="price">${money(selectedOffer.price)}</div></div><div class="stat-card"><div class="stat-label">Chegada estimada</div><div class="meta-value">${selectedOffer.eta_minutes} minutos</div></div></div>`:''}<div class="notice">${state.demoRide?'Esta é uma simulação visual, não uma corrida real.':state.realtimeStatus==='subscribed'?'Atualizações em tempo real ativadas.':`Conexão em tempo real: ${escapeHtml(state.realtimeStatus)}.`}</div>${['searching','offered'].includes(state.rideStatus)?'<button class="btn btn-green btn-block" data-view="offers">Ver propostas</button>':''}${canCancel?'<button class="btn btn-danger btn-block" id="cancel-ride">Cancelar corrida</button>':''}${state.rideStatus==='completed'?'<button class="btn btn-green btn-block" data-view="history">Ver histórico e avaliar</button>':''}${state.rideStatus==='cancelled'?'<button class="btn btn-green btn-block" data-view="home">Solicitar outra corrida</button>':''}</div>`;
+ return `${heading('ACOMPANHAMENTO','Sua corrida','Status sincronizado com o mototaxista pelo Supabase.')}<div class="panel"><span class="tag ${state.rideStatus==='cancelled'?'tag-orange':'tag-green'}">${labels[state.rideStatus]||'Status da corrida'}</span>${route(state.pickup,state.destination)}${timer}${driverCard||pendingDriverCard}${state.rideStatus==='cancelled'?`<div class="notice">${escapeHtml(cancelMessage)}</div>`:''}${inProgressNotice}${state.rideStatus==='confirmed'&&selectedOffer&&!driver?`<div class="grid-two" style="margin:16px 0"><div class="stat-card"><div class="stat-label">Valor acordado</div><div class="price">${money(selectedOffer.price)}</div></div><div class="stat-card"><div class="stat-label">Chegada estimada</div><div class="meta-value">${selectedOffer.eta_minutes} minutos</div></div></div>`:''}<div class="notice">${state.demoRide?'Esta é uma simulação visual, não uma corrida real.':state.realtimeStatus==='subscribed'?'Atualizações em tempo real ativadas.':`Conexão em tempo real: ${escapeHtml(state.realtimeStatus)}.`}</div>${['searching','offered'].includes(state.rideStatus)?'<button class="btn btn-green btn-block" data-view="offers">Ver propostas</button>':''}${canCancel?'<button class="btn btn-danger btn-block" id="cancel-ride">Cancelar corrida</button>':''}${state.rideStatus==='completed'?'<button class="btn btn-green btn-block" data-view="history">Ver histórico e avaliar</button>':''}${state.rideStatus==='cancelled'?'<button class="btn btn-green btn-block" data-view="home">Solicitar outra corrida</button>':''}${!state.demoRide&&['confirmed','in_progress','completed','cancelled'].includes(state.rideStatus)?rideChatButtonMarkup(state.rideId,state.chatUnreadByRide[state.rideId]):''}</div>`;
 }
 function reviewCard(ride){
  const draft=state.reviewDrafts[ride.ride_id]||{};
@@ -280,7 +401,7 @@ async function submitReview(form){
 }
 function historyView(){
  const rides=state.rideHistory;
- const cards=rides.map(ride=>`<article class="panel" style="margin-bottom:14px"><div class="section-title"><h2>${ride.status==='completed'?'Corrida concluída':ride.status==='cancelled'?'Corrida cancelada':'Solicitação expirada'}</h2><span class="muted">${ride.completed_at?new Date(ride.completed_at).toLocaleDateString('pt-BR'):new Date(ride.created_at).toLocaleDateString('pt-BR')}</span></div>${route(ride.pickup_text,ride.destination_text)}<div class="driver-top">${profileAvatar(ride.other_avatar_photo_url,ride.other_username||ride.other_full_name||'U')}<div><div class="driver-name">${escapeHtml(ride.other_username?`@${ride.other_username}`:ride.other_full_name||'Usuário')}</div><div class="muted">${ride.other_review_count?`★ ${Number(ride.other_average_rating).toFixed(2)} · ${ride.other_review_count} avaliações`:'Sem avaliações'} · ${ride.status==='completed'?'Participante da corrida':'Participante da solicitação'}</div></div></div>${reviewCard(ride)}</article>`).join('');
+ const cards=rides.map(ride=>`<article class="panel" style="margin-bottom:14px"><div class="section-title"><h2>${ride.status==='completed'?'Corrida concluída':ride.status==='cancelled'?'Corrida cancelada':'Solicitação expirada'}</h2><span class="muted">${ride.completed_at?new Date(ride.completed_at).toLocaleDateString('pt-BR'):new Date(ride.created_at).toLocaleDateString('pt-BR')}</span></div>${route(ride.pickup_text,ride.destination_text)}<div class="driver-top">${profileAvatar(ride.other_avatar_photo_url,ride.other_username||ride.other_full_name||'U')}<div><div class="driver-name">${escapeHtml(ride.other_username?`@${ride.other_username}`:ride.other_full_name||'Usuário')}</div><div class="muted">${ride.other_review_count?`★ ${Number(ride.other_average_rating).toFixed(2)} · ${ride.other_review_count} avaliações`:'Sem avaliações'} · ${ride.status==='completed'?'Participante da corrida':'Participante da solicitação'}</div></div></div>${['completed','cancelled'].includes(ride.status)?rideChatButtonMarkup(ride.ride_id,state.chatUnreadByRide[ride.ride_id]):''}${reviewCard(ride)}</article>`).join('');
  return `${heading('SUAS CORRIDAS','Histórico','Acompanhe suas corridas concluídas e avalie a outra pessoa quando quiser.')}<div class="notice">${state.reputation.review_count?`Sua reputação: ★ ${Number(state.reputation.average_rating).toFixed(2)} · ${state.reputation.review_count} avaliações recebidas.`:'Sem avaliações recebidas ainda.'}</div>${cards||'<div class="panel empty-state"><div class="empty-icon">◷</div><strong>Nenhuma corrida no histórico</strong><p>Corridas concluídas aparecerão aqui e continuarão disponíveis após você entrar novamente.</p><button class="btn btn-green" data-view="home">Solicitar uma corrida</button></div>'}`;
 }
 function accountView(){return `${heading('SEU PERFIL','Minha conta','Gerencie sua foto, nome de usuário e os dados da conta.')}<section class="panel auth-card"><span class="tag ${isSupabaseConfigured?'tag-green':'tag-orange'}">${isSupabaseConfigured?'Backend configurado':'Sem conexão com backend'}</span>${state.user?`<div class="driver-top" style="padding:22px 0 12px">${profileAvatar(state.profile?.avatar_photo_url,state.profile?.username||state.user.email||'U')}<div><h2>Você está conectado</h2><p class="panel-sub">${escapeHtml(state.user.email||'Conta autenticada')}</p></div></div><div class="notice">${state.reputation.review_count?`Sua reputação: ★ ${Number(state.reputation.average_rating).toFixed(2)} · ${state.reputation.review_count} avaliações.`:'Sem avaliações recebidas.'}</div><form id="profile-form"><div class="field"><label for="profile-photo">Foto de perfil</label><input id="profile-photo" name="photo" type="file" accept="image/jpeg,image/png,image/webp"><span class="field-help">JPG, PNG ou WebP; até 5 MB. A foto só fica visível a mototaxistas vinculados às suas solicitações ou corridas.</span></div><div class="field"><label for="username">Nome de usuário</label><input id="username" name="username" autocomplete="username" minlength="3" maxlength="24" pattern="[A-Za-z0-9._]{3,24}" placeholder="ex.: maria.silva" value="${escapeHtml(state.profile?.username||'')}" required><span class="field-help">3–24 caracteres: letras sem acento, números, ponto ou sublinhado. O nome é público nas áreas apropriadas.</span></div><button class="btn btn-green btn-block" type="submit" ${state.busy?'disabled':''}>Salvar perfil</button></form><button class="btn btn-danger btn-block" id="logout" style="margin-top:10px">Sair da conta</button>`:`<div class="auth-tabs"><button data-auth-mode="login" class="${state.authMode==='login'?'active':''}">Entrar</button><button data-auth-mode="signup" class="${state.authMode==='signup'?'active':''}">Criar conta</button></div><form id="auth-form"><div class="field ${state.authMode==='signup'?'':'hidden'}"><label for="fullName">Nome completo</label><input id="fullName" name="fullName" autocomplete="name" placeholder="Seu nome" ${state.authMode==='signup'?'required':''}></div><div class="field"><label for="email">E-mail</label><input id="email" name="email" type="email" autocomplete="email" placeholder="voce@email.com" required></div><div class="field"><label for="password">Senha</label><input id="password" name="password" type="password" autocomplete="current-password" minlength="6" placeholder="Mínimo de 6 caracteres" required></div><button class="btn btn-green btn-block" type="submit">${state.authMode==='login'?'Entrar':'Criar conta'}</button></form><div class="notice">${isSupabaseConfigured?'Use seu e-mail para autenticar. O cadastro precisa ser configurado com as políticas SQL do projeto.':'O login real fica desativado até você configurar as variáveis do Supabase.'}</div>`}</section>`}
@@ -319,8 +440,16 @@ function applyRideSnapshot(ride){
  state.cancelledBy=ride.cancelled_by;
  state.cancelledAt=ride.cancelled_at;
  state.cancellationReason=ride.cancellation_reason;
+ if(state.chatRideId===ride.id)state.chatRideStatus=ride.status;
+ if(['confirmed','in_progress','completed','cancelled'].includes(ride.status))ensureCustomerChatRealtime(ride.id);
+ if(ride.status==='cancelled')clearPushNotificationForRide(ride.id).catch(error=>showToast(error.message||'Não foi possível limpar a notificação da corrida cancelada.','error'));
  if('pickup_latitude' in ride)state.pickupCoordinates=normalizeCoordinates({latitude:ride.pickup_latitude,longitude:ride.pickup_longitude});
  if('destination_latitude' in ride)state.destinationCoordinates=normalizeCoordinates({latitude:ride.destination_latitude,longitude:ride.destination_longitude});
+ if(['completed','cancelled','expired'].includes(ride.status)){
+  state.pickupCoordinates=null;
+  state.destinationCoordinates=null;
+  state.driverLocation=null;
+ }
  if(ride.pickup_location_source)state.pickupLocationSource=ride.pickup_location_source;
  if(ride.destination_location_source)state.destinationLocationSource=ride.destination_location_source;
  if(ride.status==='confirmed'||ride.status==='in_progress'){
@@ -427,7 +556,7 @@ function bind(){
  const cancelButton=app.querySelector('#cancel-ride');if(cancelButton)cancelButton.addEventListener('click',cancelCustomerRide);
  app.querySelectorAll('[data-auth-mode]').forEach(el=>el.addEventListener('click',()=>{state.authMode=el.dataset.authMode;render()}));
  const auth=app.querySelector('#auth-form');if(auth)auth.addEventListener('submit',async e=>{e.preventDefault();const fd=new FormData(auth);try{if(state.authMode==='login')await signIn(String(fd.get('email')),String(fd.get('password')));else await signUp(String(fd.get('email')),String(fd.get('password')),String(fd.get('fullName')),'customer',{emailRedirectTo:nativeAuthRedirectUrl('com.vaimoto.app')});const {data}=await getCurrentUser();state.user=data?.user||null;state.authUserId=state.user?.id||null;if(state.user){await restoreActiveRide();registerPushNotificationsIfPermitted().catch(error=>showToast(error.message||'Não foi possível atualizar o token push.','error'))}processCustomerPushAction();showToast(state.authMode==='login'?'Login realizado.':'Cadastro enviado. Verifique seu e-mail, se solicitado.','success');render()}catch(err){showToast(err.message||'Não foi possível autenticar.','error')}});
-  const logout=app.querySelector('#logout');if(logout)logout.addEventListener('click',async()=>{try{await removePushDevice('customer',state.user?.id);await signOut();state.user=null;state.authUserId=null;state.rideId=null;state.rideOffers=[];state.driverOfferProfiles={};state.driverDetails=null;state.driverLocation=null;state.pickupCoordinates=null;state.destinationCoordinates=null;state.profile=null;state.rideHistory=[];state.reputation={average_rating:null,review_count:0};await Promise.all([stopRideRealtime(),stopCustomerReviewRealtime()]);showToast('Você saiu da conta.','success');render()}catch(err){showToast(err.message,'error')}});
+  const logout=app.querySelector('#logout');if(logout)logout.addEventListener('click',async()=>{try{await removePushDevice('customer',state.user?.id);await signOut();state.user=null;state.authUserId=null;state.rideId=null;state.rideOffers=[];state.driverOfferProfiles={};state.driverDetails=null;state.driverLocation=null;state.pickupCoordinates=null;state.destinationCoordinates=null;state.profile=null;state.rideHistory=[];state.reputation={average_rating:null,review_count:0};state.chatOpen=false;state.chatRideId=null;state.chatRideStatus=null;state.chatMessages=[];state.chatUnreadByRide={};state.chatUserId=null;await Promise.all([stopRideRealtime(),stopCustomerReviewRealtime()]);showToast('Você saiu da conta.','success');render()}catch(err){showToast(err.message,'error')}});
 }
 const renderDemoOffersView = offersView;
 offersView = function renderLiveOffersView() {
@@ -502,11 +631,13 @@ async function refreshRideStatus(rideId) {
 }
 
 async function stopRideRealtime() {
-  const channels = [state.offerChannel, state.rideChannel, state.driverLocationChannel].filter(Boolean);
+  const channels = [state.offerChannel, state.rideChannel, state.driverLocationChannel, state.chatChannel].filter(Boolean);
   state.offerChannel = null;
   state.rideChannel = null;
   state.driverLocationChannel = null;
   state.driverLocationRideId = null;
+  state.chatChannel = null;
+  state.chatRealtimeRideId = null;
   state.realtimeRideId = null;
   await Promise.all(channels.map(removeRealtimeChannel));
 }
@@ -546,7 +677,13 @@ async function startRideRealtime(rideId) {
     event: '*',
     filter: `ride_id=eq.${rideId}`,
     onChange: payload => {
-      if (state.rideId !== rideId || !payload.new?.id) return;
+      if (state.rideId !== rideId || payload.new?.ride_id !== rideId || !payload.new?.id) return;
+      if (payload.eventType === 'INSERT' && payload.new.status === 'pending'
+          && ['searching', 'offered'].includes(state.rideStatus)) {
+        playOfferAlertOnce(`new-offer:${payload.new.id}`, customerOfferAudioUrl, error => {
+          showToast(error.message || 'Não foi possível reproduzir o som da nova proposta.','error');
+        });
+      }
       refreshRideOffers(rideId).catch(error => showToast(error.message || 'Não foi possível atualizar propostas e fotos.', 'error'));
     },
     onStatus: status => {
@@ -668,6 +805,12 @@ async function init(){
    getUserId:()=>state.user?.id||null,
    onNotification:notification=>{
     const data=notification.data||{};
+    if(data.kind==='new_offer'&&data.offer_id&&state.rideId===String(data.ride_id)
+       &&['searching','offered'].includes(state.rideStatus)){
+     playOfferAlertOnce(data.notification_id||`new-offer:${data.offer_id}`,customerOfferAudioUrl,error=>{
+      showToast(error.message||'Não foi possível reproduzir o som da nova proposta.','error');
+     });
+    }
     if(data.ride_id)openCustomerPushRide(notification);
    },
    onAction:notification=>{
@@ -704,7 +847,7 @@ async function init(){
      stopRideRealtime().catch(error=>console.error('Falha ao encerrar canais Realtime:',error));
      stopCustomerReviewRealtime().catch(error=>console.error('Falha ao encerrar o canal de avaliações:',error));
      state.rideId=null;state.rideOffers=[];state.driverOfferProfiles={};state.driverDetails=null;state.profile=null;state.rideStatus='searching';state.selectedOfferId=null;
-     state.rideHistory=[];state.reputation={average_rating:null,review_count:0};state.reviewDrafts={};
+     state.rideHistory=[];state.reputation={average_rating:null,review_count:0};state.reviewDrafts={};state.chatOpen=false;state.chatRideId=null;state.chatRideStatus=null;state.chatMessages=[];state.chatUnreadByRide={};state.chatUserId=null;state.chatLoading=false;state.chatSending=false;state.chatError=null;
      if(state.user)restoreActiveRide().then(async()=>{registerPushNotificationsIfPermitted().catch(error=>showToast(error.message||'Não foi possível atualizar o token push.','error'));await startCustomerReviewRealtime();await refreshCustomerHistory();processCustomerPushAction();render()}).catch(error=>showToast(error.message||'Não foi possível retomar sua corrida e carregar seu histórico.','error'));
     }
     render();

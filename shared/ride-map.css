@@ -46,17 +46,53 @@
   height: 18px;
   border: 3px solid #fff;
   border-radius: 50% 50% 50% 0;
-  background: #16a34a;
+  background: #2563eb;
   box-shadow: 0 2px 8px #0f172a66;
   transform: rotate(-45deg);
 }
 
 .ride-map-marker--destination {
-  background: #dc2626;
+  background: #16a34a;
+}
+
+.ride-map-marker--pickup {
+  background: #2563eb;
 }
 
 .ride-map-marker--driver {
+  background: #dc2626;
+}
+
+.ride-map-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  color: #475569;
+  font-size: 12px;
+}
+
+.ride-map-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ride-map-legend i {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.ride-map-legend .ride-map-legend-driver {
+  background: #dc2626;
+}
+
+.ride-map-legend .ride-map-legend-pickup {
   background: #2563eb;
+}
+
+.ride-map-legend .ride-map-legend-destination {
+  background: #16a34a;
 }
 
 .ride-map-panel .leaflet-control-attribution {

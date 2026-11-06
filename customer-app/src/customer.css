@@ -7,15 +7,52 @@
   position: sticky;
   top: 0;
   z-index: 40;
+  height: calc(72px + env(safe-area-inset-top));
+  padding-inline: clamp(18px, 5vw, 64px);
   padding-top: env(safe-area-inset-top);
-  height: calc(76px + env(safe-area-inset-top));
-  background: #fff;
+  background: #111827;
+  border-bottom: 0;
+  color: #fff;
+}
+
+.app-shell .brand-mark {
+  border-radius: 13px;
+  background: #16a34a;
+  color: #fff;
+}
+
+.app-shell .brand-name {
+  color: #fff;
+}
+
+.app-shell .brand-name span {
+  color: #4ade80;
+}
+
+.app-shell .status-pill {
+  background: #1f2937;
+  border-color: #374151;
+  color: #e5e7eb;
+}
+
+.app-shell .status-pill:before {
+  background: #4ade80;
+}
+
+.app-shell .demo-pill {
+  background: #422006;
+  border-color: #854d0e;
+  color: #fde68a;
+}
+
+.app-shell .demo-pill:before {
+  background: #f59e0b;
 }
 
 .app-shell .layout {
   width: 100%;
   min-width: 0;
-  min-height: calc(100dvh - 76px - env(safe-area-inset-top));
+  min-height: calc(100dvh - 72px - env(safe-area-inset-top));
 }
 
 .app-shell .main {
