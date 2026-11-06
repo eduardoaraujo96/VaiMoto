@@ -269,13 +269,14 @@ Deno.serve(async request => {
               collapse_key: message.notificationTag,
               notification: {
                 channel_id: isNewRideRequest
-                  ? 'ride-requests-v3'
+                  ? 'ride-requests-v4'
                   : isNewOffer
-                    ? 'ride-offers-v1'
+                    ? 'ride-offers-v2'
                   : isCancelledRide
                     ? 'ride-updates-silent'
-                    : 'ride-alerts-v2',
+                    : 'ride-alerts-v3',
                 ...(isNewRideRequest ? { sound: 'som_corrida' } : {}),
+                ...(isNewOffer ? { sound: 'notificationcliente' } : {}),
                 tag: message.notificationTag
               }
             },

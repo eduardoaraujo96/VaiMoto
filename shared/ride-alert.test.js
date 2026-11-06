@@ -23,9 +23,11 @@ test('plays one sound for a notification ID even when Realtime and push repeat i
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
   const previousFetch = globalThis.fetch;
+  const previousAudio = globalThis.Audio;
   globalThis.window = { AudioContext: FakeAudioContext };
   globalThis.document = { visibilityState: 'visible' };
   globalThis.fetch = async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(0) });
+  globalThis.Audio = undefined;
   t.after(() => {
     if (previousWindow === undefined) delete globalThis.window;
     else globalThis.window = previousWindow;
@@ -33,6 +35,8 @@ test('plays one sound for a notification ID even when Realtime and push repeat i
     else globalThis.document = previousDocument;
     if (previousFetch === undefined) delete globalThis.fetch;
     else globalThis.fetch = previousFetch;
+    if (previousAudio === undefined) delete globalThis.Audio;
+    else globalThis.Audio = previousAudio;
   });
 
   const notificationId = `new-ride:${createUuid()}`;

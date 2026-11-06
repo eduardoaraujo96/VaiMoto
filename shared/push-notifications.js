@@ -3,10 +3,11 @@ import { PushNotifications } from '@capacitor/push-notifications';
 import { supabase } from './supabase.js';
 import { createUuid } from './uuid.js';
 
-const CHANNEL_ID = 'ride-alerts-v2';
-const RIDE_REQUEST_CHANNEL_ID = 'ride-requests-v3';
-const CUSTOMER_OFFERS_CHANNEL_ID = 'ride-offers-v1';
+const CHANNEL_ID = 'ride-alerts-v3';
+const RIDE_REQUEST_CHANNEL_ID = 'ride-requests-v4';
+const CUSTOMER_OFFERS_CHANNEL_ID = 'ride-offers-v2';
 const SILENT_UPDATE_CHANNEL_ID = 'ride-updates-silent';
+const OBSOLETE_CHANNEL_IDS = ['ride-alerts-v2', 'ride-requests-v3', 'ride-offers-v1'];
 let listenersReady = false;
 let currentConfig = null;
 
@@ -39,6 +40,9 @@ export async function initializePushNotifications(config) {
   if (!Capacitor.isNativePlatform() || listenersReady) return;
 
   if (Capacitor.getPlatform() === 'android') {
+    await Promise.all(OBSOLETE_CHANNEL_IDS.map(id =>
+      PushNotifications.deleteChannel({ id }).catch(() => {})
+    ));
     await PushNotifications.createChannel({
       id: CHANNEL_ID,
       name: 'Chamados e corridas',
@@ -58,7 +62,8 @@ export async function initializePushNotifications(config) {
         visibility: 1,
         vibration: true,
         lights: true,
-        lightColor: '#16A34A'
+        lightColor: '#16A34A',
+        sound: 'notificationcliente'
       });
     }
     await PushNotifications.createChannel({
@@ -79,6 +84,8 @@ export async function initializePushNotifications(config) {
         importance: 5,
         visibility: 1,
         vibration: true,
+        lights: true,
+        lightColor: '#16A34A',
         sound: 'som_corrida'
       });
     }

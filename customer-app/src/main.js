@@ -14,6 +14,36 @@ import { bindRideChatControls, getRideChat, markRideChatRead, rideChatButtonMark
 import customerOfferAudioUrl from '../../notificacaoCliente/notificationCliente.mp3?url';
 import { playOfferAlertOnce } from '../../shared/proposal-alert.js';
 
+let offerSoundUnlockReady = false;
+function prepareOfferAlertUnlock() {
+  if (offerSoundUnlockReady) return;
+  offerSoundUnlockReady = true;
+  const unlock = () => {
+    document.removeEventListener('pointerdown', unlock, true);
+    document.removeEventListener('touchstart', unlock, true);
+    document.removeEventListener('keydown', unlock, true);
+    try {
+      const warmer = new Audio(customerOfferAudioUrl);
+      warmer.preload = 'auto';
+      warmer.playsInline = true;
+      warmer.muted = true;
+      const playResult = warmer.play();
+      if (playResult && typeof playResult.then === 'function') {
+        playResult.then(() => {
+          warmer.pause();
+          warmer.currentTime = 0;
+          warmer.muted = false;
+        }).catch(() => {});
+      }
+    } catch {
+      // the next real alert still retries after a user gesture
+    }
+  };
+  document.addEventListener('pointerdown', unlock, { once: true, capture: true });
+  document.addEventListener('touchstart', unlock, { once: true, capture: true });
+  document.addEventListener('keydown', unlock, { once: true, capture: true });
+}
+
 const app = document.querySelector('#app');
 const state = { view: 'home', pickup: '', destination: '', pickupCoordinates: null, destinationCoordinates: null, pickupLocationSource: 'text_only', destinationLocationSource: 'text_only', driverLocation: null, mapSelectionMode: 'pickup', selected: null, rideId: null, rideStatus: 'searching', selectedOfferId: null, rideOffers: [], driverOfferProfiles: {}, driverDetails: null, arrivalStartedAt: null, arrivalDeadlineAt: null, cancelledBy: null, cancelledAt: null, cancellationReason: null, profile: null, offerChannel: null, rideChannel: null, driverLocationChannel: null, driverLocationRideId: null, reviewChannel: null, chatChannel: null, chatRealtimeRideId: null, chatRideId: null, chatRideStatus: null, chatMessages: [], chatUnreadByRide: {}, chatUserId: null, chatLoading: false, chatSending: false, chatError: null, chatOpen: false, realtimeRideId: null, realtimeStatus: 'idle', user: null, authUserId: null, authMode: 'login', busy: false, rideHistory: [], reputation: { average_rating: null, review_count: 0 }, reviewDrafts: {} };
 let pendingPushAction = null;
@@ -524,8 +554,9 @@ function bind(){
   if(state.pickup.toLocaleLowerCase()===state.destination.toLocaleLowerCase()){showToast('Partida e destino precisam ser diferentes.','error');return}
   if(!state.pickupCoordinates&&!form.querySelector('#pickup-text-only-confirm').checked){showToast('Confirme a descrição da partida sem coordenadas ou marque um ponto aproximado no mapa.','error');return}
   if(!state.destinationCoordinates&&!form.querySelector('#destination-text-only-confirm').checked){showToast('Confirme a descrição do destino sem coordenadas ou marque um ponto aproximado no mapa.','error');return}
-  if(isSupabaseConfigured&&!state.user){state.view='account';showToast('Entre na sua conta para solicitar uma corrida real.','error');render();return}
-  state.busy=true;render();
+   if(isSupabaseConfigured&&!state.user){state.view='account';showToast('Entre na sua conta para solicitar uma corrida real.','error');render();return}
+   prepareOfferAlertUnlock();
+   state.busy=true;render();
   try{
    if(isSupabaseConfigured){
     try{
@@ -799,6 +830,7 @@ function processCustomerPushAction(){
 }
 
 async function init(){
+ prepareOfferAlertUnlock();
  try{
   await initializePushNotifications({
    appRole:'customer',

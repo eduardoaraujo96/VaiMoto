@@ -30,13 +30,15 @@ let soundUnlockListenersReady=false;
 function prepareRideAlertUnlock(){
  if(soundUnlockListenersReady)return;
  soundUnlockListenersReady=true;
- const unlock=()=>{
-  document.removeEventListener('pointerdown',unlock,true);
-  document.removeEventListener('touchstart',unlock,true);
-  unlockRideAlertSound(error=>showToast(error.message||'Não foi possível preparar o som de solicitações.','error'));
- };
- document.addEventListener('pointerdown',unlock,{once:true,capture:true});
- document.addEventListener('touchstart',unlock,{once:true,capture:true});
+  const unlock=()=>{
+   document.removeEventListener('pointerdown',unlock,true);
+   document.removeEventListener('touchstart',unlock,true);
+   document.removeEventListener('keydown',unlock,true);
+   unlockRideAlertSound(error=>showToast(error.message||'Não foi possível preparar o som de solicitações.','error'));
+  };
+  document.addEventListener('pointerdown',unlock,{once:true,capture:true});
+  document.addEventListener('touchstart',unlock,{once:true,capture:true});
+  document.addEventListener('keydown',unlock,{once:true,capture:true});
 }
 const header=()=>`<header class="topbar"><a class="brand" href="#" data-view="dashboard" aria-label="VaiMoto, início"><span class="brand-mark">V</span><span class="brand-name">Vai<span>Moto</span></span></a><div class="top-actions"><span class="status-pill ${isSupabaseConfigured?'':'demo-pill'}">${isSupabaseConfigured?'BETA':'Modo demonstração'}</span></div></header>`;
 const navHtml=cls=>`<nav class="${cls}" aria-label="Navegação principal">${nav.map(n=>`<button type="button" class="nav-item ${state.view===n.id?'active':''}" data-view="${n.id}" aria-current="${state.view===n.id?'page':'false'}"><span class="nav-icon" aria-hidden="true">${n.icon}</span><span>${n.label}</span></button>`).join('')}</nav>`;

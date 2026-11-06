@@ -89,6 +89,8 @@ export function playOfferAlertOnce(offerId, audioUrl, onFailure = () => {}, envi
   try {
     audio = new AudioConstructor(audioUrl);
     audio.preload = 'auto';
+    audio.playsInline = true;
+    audio.volume = 1;
   } catch (error) {
     onFailure(error);
     return Promise.resolve(false);
